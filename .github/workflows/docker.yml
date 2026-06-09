@@ -1,8 +1,8 @@
 name: Docker
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
 
 jobs:
   build-and-push:
@@ -37,8 +37,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-${{ matrix.image }}
           tags: |
-            type=sha,prefix=
-            type=raw,value=latest
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
