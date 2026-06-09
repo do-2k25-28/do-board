@@ -1,0 +1,14 @@
+[application]
+name = "frontend"
+default_platform = "web"
+
+[web.app]
+title = "Do-Board"
+
+[web.watcher]
+watch_path = ["src", "assets", "input.css"]
+
+[web.resource]
+dev = { style = [], script = [] }
+style = []
+script = []

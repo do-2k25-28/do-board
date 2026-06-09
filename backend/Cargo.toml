@@ -1,0 +1,12 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+axum = "0.8"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"] }

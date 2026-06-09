@@ -1,0 +1,14 @@
+# Rust
+/target
+
+# Dioxus
+/frontend/dist
+/frontend/.dioxus
+/frontend/assets/tailwind.css
+
+# Node
+/frontend/node_modules
+
+# Env
+.env
+.env.*

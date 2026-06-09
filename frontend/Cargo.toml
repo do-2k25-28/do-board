@@ -1,0 +1,14 @@
+[package]
+name = "frontend"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "frontend"
+path = "src/main.rs"
+
+[dependencies]
+shared = { path = "../shared" }
+dioxus = { version = "0.7", features = ["web"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
