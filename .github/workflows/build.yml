@@ -1,0 +1,63 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-build-
+
+      - name: Build backend (release)
+        run: cargo build -p backend --release
+
+      - name: Install Tailwind CSS CLI
+        run: |
+          curl -fsSL -o /usr/local/bin/tailwindcss \
+            https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
+          chmod +x /usr/local/bin/tailwindcss
+
+      - name: Generate Tailwind CSS
+        run: tailwindcss -i frontend/input.css -o frontend/assets/tailwind.css
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --locked
+
+      - name: Build frontend (wasm)
+        working-directory: frontend
+        run: dx build --release
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: backend
+          path: target/release/backend
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: frontend
+          path: frontend/dist/
