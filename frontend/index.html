@@ -3,9 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Do-Board</title>
+    <title></title>
   </head>
   <body>
     <div id="main"></div>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+      let debounceTimer;
+      const observerConfig = { childList: true, subtree: true };
+      const observer = new MutationObserver(() => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          observer.disconnect();
+          lucide.createIcons();
+          observer.observe(document.body, observerConfig);
+        }, 50);
+      });
+      document.addEventListener("DOMContentLoaded", () => {
+        observer.observe(document.body, observerConfig);
+      });
+    </script>
   </body>
 </html>
