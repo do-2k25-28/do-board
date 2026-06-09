@@ -38,8 +38,14 @@ jobs:
       - name: Clippy (native)
         run: cargo clippy --workspace --exclude frontend -- -D warnings
 
+      - name: Install Tailwind CSS CLI
+        run: |
+          curl -fsSL -o /usr/local/bin/tailwindcss \
+            https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
+          chmod +x /usr/local/bin/tailwindcss
+
       - name: Generate Tailwind CSS
-        run: npx --yes @tailwindcss/cli -i frontend/input.css -o frontend/assets/tailwind.css
+        run: tailwindcss -i frontend/input.css -o frontend/assets/tailwind.css
 
       - name: Clippy (wasm)
         run: cargo clippy -p frontend --target wasm32-unknown-unknown -- -D warnings

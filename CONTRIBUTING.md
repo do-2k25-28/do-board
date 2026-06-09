@@ -7,6 +7,30 @@ Thank you for your interest in contributing to do-board.
 - Rust ≥ 1.80
 - `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - Dioxus CLI for frontend builds (`cargo install dioxus-cli`)
+- [pre-commit](https://pre-commit.com) (`pip install pre-commit` or `brew install pre-commit`)
+- cargo-audit (`cargo install cargo-audit --locked`)
+
+## Pre-commit hooks
+
+Install the hooks once after cloning:
+
+```sh
+pre-commit install
+```
+
+The hooks run automatically on `git commit` and mirror the CI checks:
+
+| Hook | Trigger |
+|------|---------|
+| `cargo fmt --check` | any `.rs` file staged |
+| `cargo clippy` (native) | any `.rs` file staged |
+| `cargo audit` | `Cargo.lock` staged |
+
+To run all hooks manually:
+
+```sh
+pre-commit run --all-files
+```
 
 ## Workflow
 
