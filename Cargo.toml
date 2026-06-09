@@ -6,6 +6,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.metadata]
+app_name = "do-board"
+
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -7,8 +7,15 @@ edition = "2021"
 name = "frontend"
 path = "src/main.rs"
 
+[build-dependencies]
+toml = "0.8"
+serde = { workspace = true }
+
 [dependencies]
 shared = { path = "../shared" }
-dioxus = { version = "0.7", features = ["web"] }
+dioxus = { version = "0.7", features = ["web", "router"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Document", "Element", "DomTokenList", "Window"] }
