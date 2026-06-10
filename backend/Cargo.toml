@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 shared = { path = "../shared" }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+chrono = "0.4.45"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

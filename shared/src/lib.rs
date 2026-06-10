@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Device {
+    pub id: String,
+    pub ip: String,
+    pub browser: String,
+    pub os: String,
+    pub online: bool,
+    pub connected_at: String,
+    pub last_seen: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Widget {
     pub id: String,
