@@ -11,7 +11,7 @@ const NAV_ITEM_ACTIVE: &str = "flex items-center gap-3 rounded-md px-3 py-2 text
 #[component]
 pub fn MainLayout() -> Element {
     let route = use_route::<Route>();
-    let is_home = matches!(route, Route::Home {});
+    let is_devices = matches!(route, Route::Home {});
 
     rsx! {
         div { class: "flex h-screen bg-background",
@@ -23,9 +23,9 @@ pub fn MainLayout() -> Element {
                     SidebarGroup {
                         Link {
                             to: Route::Home {},
-                            class: if is_home { NAV_ITEM_ACTIVE } else { NAV_ITEM },
-                            Icon { name: "layout-dashboard", size: "18" }
-                            "Dashboard"
+                            class: if is_devices { NAV_ITEM_ACTIVE } else { NAV_ITEM },
+                            Icon { name: "monitor-dot", size: "18" }
+                            "Devices"
                         }
                     }
                 }
