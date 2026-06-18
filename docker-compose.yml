@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17.5
+    environment:
+      POSTGRES_DB: doboard
+      POSTGRES_USER: doboard
+      POSTGRES_PASSWORD: doboard_secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doboard -d doboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://doboard:doboard_secret@postgres:5432/doboard
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

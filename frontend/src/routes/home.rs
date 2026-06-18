@@ -3,7 +3,10 @@ use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use shared::Device;
 
-const API_BASE: &str = "http://localhost:3000";
+const API_BASE: &str = match option_env!("API_BASE") {
+    Some(v) => v,
+    None => "",
+};
 
 #[component]
 pub fn Home() -> Element {
@@ -55,13 +58,13 @@ pub fn Home() -> Element {
 
             if fetch_error() {
                 div { class: "rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive mb-4",
-                    "Cannot reach backend (localhost:3000)"
+                    "Cannot reach backend"
                 }
             }
 
             if loading() {
                 div { class: "flex items-center justify-center p-12",
-                    p { class: "text-muted-foreground text-sm", "Loading..." }
+                    p { class: "text-muted-foreground text-sm", "Loading…" }
                 }
             } else if devs.is_empty() {
                 div { class: "flex flex-col items-center justify-center p-16 border rounded-lg border-dashed",
@@ -86,7 +89,6 @@ fn DeviceCard(device: Device) -> Element {
     rsx! {
         div {
             class: "border rounded-xl p-4 bg-card flex flex-col gap-3 transition-shadow hover:shadow-md",
-            // Status row
             div { class: "flex items-center justify-between",
                 div { class: "flex items-center gap-2",
                     span {
@@ -106,9 +108,7 @@ fn DeviceCard(device: Device) -> Element {
                     }
                 }
             }
-            // IP address
             p { class: "font-mono text-lg font-bold tracking-tight", "{device.ip}" }
-            // Browser + OS badges
             div { class: "flex flex-wrap gap-1.5",
                 span { class: "inline-flex items-center rounded-md border bg-muted/50 px-2 py-0.5 text-xs font-medium",
                     "{device.browser}"
@@ -117,7 +117,6 @@ fn DeviceCard(device: Device) -> Element {
                     "{device.os}"
                 }
             }
-            // Timestamps
             div { class: "text-xs text-muted-foreground space-y-0.5 pt-1 border-t",
                 p { "Connected: {device.connected_at}" }
                 p { "Last seen: {device.last_seen}" }

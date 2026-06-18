@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+pub mod auth;
 pub mod components;
 mod layouts;
 mod routes;

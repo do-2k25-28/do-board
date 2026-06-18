@@ -1,5 +1,7 @@
+use crate::auth;
 use crate::components::{
-    Icon, Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, ThemeToggle,
+    Button, ButtonVariant, Icon, Sidebar, SidebarContent, SidebarFooter, SidebarGroup,
+    SidebarHeader, ThemeToggle,
 };
 use crate::routes::Route;
 use crate::{APP_NAME, APP_VERSION};
@@ -12,6 +14,20 @@ const NAV_ITEM_ACTIVE: &str = "flex items-center gap-3 rounded-md px-3 py-2 text
 pub fn MainLayout() -> Element {
     let route = use_route::<Route>();
     let is_devices = matches!(route, Route::Home {});
+    let is_users = matches!(route, Route::Users {});
+    let nav = use_navigator();
+
+    let email = auth::get_email().unwrap_or_else(|| "Admin".to_string());
+    let initials = email
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "A".to_string());
+
+    let on_logout = move |_| {
+        auth::logout();
+        nav.replace(Route::Login {});
+    };
 
     rsx! {
         div { class: "flex h-screen bg-background",
@@ -27,6 +43,12 @@ pub fn MainLayout() -> Element {
                             Icon { name: "monitor-dot", size: "18" }
                             "Devices"
                         }
+                        Link {
+                            to: Route::Users {},
+                            class: if is_users { NAV_ITEM_ACTIVE } else { NAV_ITEM },
+                            Icon { name: "users", size: "18" }
+                            "Users"
+                        }
                     }
                 }
                 SidebarFooter {
@@ -36,10 +58,17 @@ pub fn MainLayout() -> Element {
             div { class: "flex flex-1 flex-col overflow-hidden",
                 header { class: "flex h-14 shrink-0 items-center justify-end gap-3 border-b bg-background text-foreground px-6",
                     ThemeToggle {}
-                    img {
-                        src: "https://ui-avatars.com/api/?name=Admin&background=1e293b&color=fff&rounded=true",
-                        alt: "Profile",
-                        class: "h-8 w-8 rounded-full",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        onclick: on_logout,
+                        Icon { name: "log-out", size: "16" }
+                        "Logout"
+                    }
+                    div { class: "flex items-center gap-2",
+                        div { class: "flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold",
+                            "{initials}"
+                        }
+                        span { class: "text-sm font-medium hidden sm:block", "{email}" }
                     }
                 }
                 main { class: "flex-1 overflow-auto",

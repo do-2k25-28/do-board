@@ -42,18 +42,72 @@ do-board/
 | `clock`     | Current time and date                |
 | `planning`  | Weekly schedule                      |
 
-## Requirements
+## Running
+
+### Docker (recommended)
+
+The only prerequisite is [Docker](https://docs.docker.com/get-docker/) with Compose v2.
+
+#### Development
+
+Hot-reload on every file change: cargo-watch recompiles the backend in a few seconds, dx serve reloads the frontend WASM in the browser.
+
+```sh
+# First run — builds the dev images (takes ~10 minutes, cached afterwards)
+docker compose -f docker-compose.dev.yml up --build
+
+# Subsequent runs
+docker compose -f docker-compose.dev.yml up
+```
+
+| Service  | URL                   | Reloads on change to…                     |
+|----------|-----------------------|-------------------------------------------|
+| Frontend | http://localhost:8080 | `frontend/src/**`, `frontend/input.css`   |
+| Backend  | http://localhost:3000 | `backend/src/**`, `shared/src/**`         |
+
+#### Production
+
+Builds optimised release images (Rust binary + nginx serving the WASM bundle).
+
+```sh
+docker compose up --build
+```
+
+| Service  | URL                   |
+|----------|-----------------------|
+| Frontend | http://localhost:80   |
+| Backend  | http://localhost:3000 |
+
+#### Environment variables
+
+Copy and edit before starting:
+
+```sh
+cp .env.example .env
+```
+
+| Variable         | Default                      | Description                          |
+|------------------|------------------------------|--------------------------------------|
+| `ADMIN_EMAIL`    | `admin@example.com`          | Email of the initial admin account   |
+| `ADMIN_PASSWORD` | `changeme`                   | Password of the initial admin account |
+| `JWT_SECRET`     | `change_me_in_production`    | Secret used to sign JWT tokens — **change this in production** |
+
+The initial admin account is created automatically on first start if it does not already exist.
+
+---
+
+### Manual (without Docker)
+
+#### Requirements
 
 - [Rust](https://rustup.rs/) ≥ 1.80
 - [Dioxus CLI](https://dioxuslabs.com/learn/0.6/getting_started) — `cargo install dioxus-cli`
 - [Tailwind CSS CLI](https://github.com/tailwindlabs/tailwindcss/releases/latest) — standalone binary, no Node.js required
 - `wasm32-unknown-unknown` target
+- A running PostgreSQL instance
 
 ```sh
-# Rust WASM target
 rustup target add wasm32-unknown-unknown
-
-# Dioxus CLI
 cargo install dioxus-cli
 
 # Tailwind CSS standalone binary (Linux x86_64)
@@ -61,31 +115,30 @@ curl -sL https://github.com/tailwindlabs/tailwindcss/releases/latest/download/ta
   -o ~/.local/bin/tailwindcss && chmod +x ~/.local/bin/tailwindcss
 ```
 
-## Running
-
-### Backend
+#### Backend
 
 ```sh
+export DATABASE_URL=postgresql://user:password@localhost:5432/doboard
+export ADMIN_EMAIL=admin@example.com
+export ADMIN_PASSWORD=changeme
+export JWT_SECRET=my_secret
+
 cargo run -p backend
 # API available at http://localhost:3000
 ```
 
-### Frontend
+#### Frontend
 
-The frontend requires two processes running in parallel.
-
-**Terminal 1 — Tailwind CSS (watch mode)**
+Two terminals running in parallel:
 
 ```sh
+# Terminal 1 — Tailwind CSS (watch mode)
 cd frontend
 tailwindcss -i input.css -o assets/tailwind.css --watch
-```
 
-**Terminal 2 — Dioxus dev server**
-
-```sh
+# Terminal 2 — Dioxus dev server
 cd frontend
-dx serve
+API_BASE=http://localhost:3000 dx serve
 # UI available at http://localhost:8080
 ```
 
