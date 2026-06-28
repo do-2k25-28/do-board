@@ -1,28 +1,116 @@
+use crate::auth::AuthUser;
 use crate::state::{AppState, DeviceStore};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        ConnectInfo, State,
+        ConnectInfo, Path, State,
     },
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
-use shared::Device;
+use shared::{Device, SaveDeviceRequest};
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, HashMap},
     hash::{Hash, Hasher},
     net::SocketAddr,
 };
 
+#[derive(sqlx::FromRow)]
+struct SavedDeviceRow {
+    id: String,
+    name: String,
+    ip: String,
+    browser: String,
+    os: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
 pub async fn list_devices(State(state): State<AppState>) -> Json<Vec<Device>> {
-    let mut list: Vec<Device> = state.devices.read().unwrap().values().cloned().collect();
+    let saved: Vec<SavedDeviceRow> =
+        sqlx::query_as("SELECT id, name, ip, browser, os, created_at FROM saved_devices")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+
+    let saved_map: HashMap<String, SavedDeviceRow> =
+        saved.into_iter().map(|r| (r.id.clone(), r)).collect();
+
+    let mut result: HashMap<String, Device> = {
+        let store = state.devices.read().unwrap();
+        store
+            .iter()
+            .map(|(k, v)| {
+                let mut d = v.clone();
+                if let Some(row) = saved_map.get(k) {
+                    d.saved = true;
+                    d.name = Some(row.name.clone());
+                }
+                (k.clone(), d)
+            })
+            .collect()
+    };
+
+    for (id, row) in &saved_map {
+        if !result.contains_key(id) {
+            let ts = row.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            result.insert(
+                id.clone(),
+                Device {
+                    id: id.clone(),
+                    ip: row.ip.clone(),
+                    browser: row.browser.clone(),
+                    os: row.os.clone(),
+                    online: false,
+                    connected_at: ts.clone(),
+                    last_seen: ts,
+                    name: Some(row.name.clone()),
+                    saved: true,
+                },
+            );
+        }
+    }
+
+    let mut list: Vec<Device> = result.into_values().collect();
     list.sort_by(|a, b| {
         b.online
             .cmp(&a.online)
             .then_with(|| a.connected_at.cmp(&b.connected_at))
     });
     Json(list)
+}
+
+pub async fn save_device(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SaveDeviceRequest>,
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    let (ip, browser, os) = {
+        let store = state.devices.read().unwrap();
+        if let Some(d) = store.get(&id) {
+            (d.ip.clone(), d.browser.clone(), d.os.clone())
+        } else {
+            (String::new(), String::new(), String::new())
+        }
+    };
+
+    sqlx::query(
+        "INSERT INTO saved_devices (id, name, ip, browser, os)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, ip = EXCLUDED.ip,
+             browser = EXCLUDED.browser, os = EXCLUDED.os",
+    )
+    .bind(&id)
+    .bind(&req.name)
+    .bind(&ip)
+    .bind(&browser)
+    .bind(&os)
+    .execute(&state.db)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+
+    Ok(StatusCode::OK)
 }
 
 pub async fn ws_handler(
@@ -57,6 +145,8 @@ pub async fn ws_handler(
                     online: true,
                     connected_at: now.clone(),
                     last_seen: now,
+                    name: None,
+                    saved: false,
                 },
             );
         }

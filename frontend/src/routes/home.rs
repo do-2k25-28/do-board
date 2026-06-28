@@ -13,9 +13,14 @@ pub fn Home() -> Element {
     let mut devices: Signal<Vec<Device>> = use_signal(Vec::new);
     let mut loading = use_signal(|| true);
     let mut fetch_error = use_signal(|| false);
+    let mut refresh = use_signal(|| 0u32);
+    let mut search = use_signal(String::new);
+    let filter_status = use_signal(|| "all");
+    let filter_saved = use_signal(|| "all");
 
     use_coroutine(move |_: UnboundedReceiver<()>| async move {
         loop {
+            let _ = refresh();
             match Request::get(&format!("{API_BASE}/api/devices"))
                 .send()
                 .await
@@ -37,6 +42,36 @@ pub fn Home() -> Element {
     let devs = devices.read();
     let online_count = devs.iter().filter(|d| d.online).count();
     let total_count = devs.len();
+
+    let search_val = search().to_lowercase();
+    let status_val = filter_status();
+    let saved_val = filter_saved();
+
+    let filtered: Vec<&Device> = devs
+        .iter()
+        .filter(|d| {
+            let search_ok = search_val.is_empty()
+                || d.ip.to_lowercase().contains(&search_val)
+                || d.browser.to_lowercase().contains(&search_val)
+                || d.os.to_lowercase().contains(&search_val)
+                || d.name
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&search_val);
+            let status_ok = match status_val {
+                "online" => d.online,
+                "offline" => !d.online,
+                _ => true,
+            };
+            let saved_ok = match saved_val {
+                "saved" => d.saved,
+                "unsaved" => !d.saved,
+                _ => true,
+            };
+            search_ok && status_ok && saved_ok
+        })
+        .collect();
 
     rsx! {
         div { class: "p-6",
@@ -62,6 +97,27 @@ pub fn Home() -> Element {
                 }
             }
 
+            // Search + filters
+            div { class: "flex flex-col sm:flex-row gap-3", style: "margin-bottom: 2rem",
+                input {
+                    class: "flex-1 text-sm border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-1 focus:ring-ring",
+                    r#type: "text",
+                    placeholder: "Search by name, IP, browser, OS…",
+                    value: "{search}",
+                    oninput: move |e| search.set(e.value()),
+                }
+                div { class: "flex gap-2 flex-wrap",
+                    FilterGroup {
+                        options: vec![("all", "All"), ("online", "Online"), ("offline", "Offline")],
+                        value: filter_status,
+                    }
+                    FilterGroup {
+                        options: vec![("all", "All"), ("saved", "Saved"), ("unsaved", "Unsaved")],
+                        value: filter_saved,
+                    }
+                }
+            }
+
             if loading() {
                 div { class: "flex items-center justify-center p-12",
                     p { class: "text-muted-foreground text-sm", "Loading…" }
@@ -73,10 +129,19 @@ pub fn Home() -> Element {
                         "Clients connecting to \"/\" will appear here"
                     }
                 }
+            } else if filtered.is_empty() {
+                div { class: "flex flex-col items-center justify-center p-16 border rounded-lg border-dashed",
+                    p { class: "font-medium", "No results" }
+                    p { class: "text-sm text-muted-foreground mt-1", "Try adjusting your search or filters" }
+                }
             } else {
                 div { class: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4",
-                    for device in devs.iter() {
-                        DeviceCard { key: "{device.id}", device: device.clone() }
+                    for device in filtered.iter() {
+                        DeviceCard {
+                            key: "{device.id}",
+                            device: (*device).clone(),
+                            on_saved: move |_| refresh.set(refresh() + 1),
+                        }
                     }
                 }
             }
@@ -85,7 +150,63 @@ pub fn Home() -> Element {
 }
 
 #[component]
-fn DeviceCard(device: Device) -> Element {
+fn FilterGroup(options: Vec<(&'static str, &'static str)>, value: Signal<&'static str>) -> Element {
+    rsx! {
+        div { class: "inline-flex rounded-lg border bg-muted/40 p-0.5 gap-0.5",
+            for (key, label) in options {
+                button {
+                    class: if value() == key {
+                        "text-xs px-3 py-1 rounded-md bg-background shadow-sm font-medium transition-colors"
+                    } else {
+                        "text-xs px-3 py-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
+                    },
+                    onclick: move |_| value.set(key),
+                    "{label}"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
+    let mut show_save_form = use_signal(|| false);
+    let is_saved = device.saved;
+    let name_init = device.name.clone();
+    let mut save_name = use_signal(|| device.name.clone().unwrap_or_default());
+    let mut saving = use_signal(|| false);
+    let mut saved = use_signal(move || is_saved);
+    let mut display_name: Signal<Option<String>> = use_signal(move || name_init);
+    // Signal so it is Copy and can be captured in multiple closures
+    let device_id = use_signal(|| device.id.clone());
+
+    let do_save = move || {
+        let id = device_id.read().clone();
+        let name_val = save_name();
+        if name_val.trim().is_empty() {
+            return;
+        }
+        spawn(async move {
+            saving.set(true);
+            let token = crate::auth::get_token().unwrap_or_default();
+            let result = Request::post(&format!("{API_BASE}/api/devices/{id}/save"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .json(&shared::SaveDeviceRequest {
+                    name: name_val.clone(),
+                })
+                .unwrap()
+                .send()
+                .await;
+            saving.set(false);
+            if result.is_ok() {
+                saved.set(true);
+                display_name.set(Some(name_val));
+                show_save_form.set(false);
+                on_saved.call(());
+            }
+        });
+    };
+
     rsx! {
         div {
             class: "border rounded-xl p-4 bg-card flex flex-col gap-3 transition-shadow hover:shadow-md",
@@ -107,8 +228,23 @@ fn DeviceCard(device: Device) -> Element {
                         if device.online { "Online" } else { "Offline" }
                     }
                 }
+                if !saved() {
+                    button {
+                        class: "text-xs px-2 py-1 rounded border border-border hover:bg-accent text-muted-foreground transition-colors",
+                        onclick: move |_| show_save_form.set(!show_save_form()),
+                        if show_save_form() { "Cancel" } else { "Save" }
+                    }
+                } else {
+                    span { class: "text-xs text-muted-foreground italic", "Saved" }
+                }
             }
+
+            if let Some(name) = display_name() {
+                p { class: "font-semibold text-base truncate", "{name}" }
+            }
+
             p { class: "font-mono text-lg font-bold tracking-tight", "{device.ip}" }
+
             div { class: "flex flex-wrap gap-1.5",
                 span { class: "inline-flex items-center rounded-md border bg-muted/50 px-2 py-0.5 text-xs font-medium",
                     "{device.browser}"
@@ -117,6 +253,30 @@ fn DeviceCard(device: Device) -> Element {
                     "{device.os}"
                 }
             }
+
+            if show_save_form() {
+                div { class: "flex gap-2 items-center",
+                    input {
+                        class: "flex-1 text-sm border rounded-md px-2 py-1 bg-background focus:outline-none focus:ring-1 focus:ring-ring",
+                        r#type: "text",
+                        placeholder: "Device name…",
+                        value: "{save_name}",
+                        oninput: move |e| save_name.set(e.value()),
+                        onkeydown: move |e| {
+                            if e.key() == Key::Enter {
+                                do_save();
+                            }
+                        },
+                    }
+                    button {
+                        class: "text-xs px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0",
+                        disabled: saving(),
+                        onclick: move |_| do_save(),
+                        if saving() { "…" } else { "Confirm" }
+                    }
+                }
+            }
+
             div { class: "text-xs text-muted-foreground space-y-0.5 pt-1 border-t",
                 p { "Connected: {device.connected_at}" }
                 p { "Last seen: {device.last_seen}" }
