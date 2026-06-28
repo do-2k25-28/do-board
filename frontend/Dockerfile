@@ -1,6 +1,6 @@
 FROM rust:1.94-slim AS builder
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN rustup target add wasm32-unknown-unknown
 RUN curl -fsSL -o /usr/local/bin/tailwindcss \

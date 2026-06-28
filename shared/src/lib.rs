@@ -9,6 +9,15 @@ pub struct Device {
     pub online: bool,
     pub connected_at: String,
     pub last_seen: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub saved: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveDeviceRequest {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
