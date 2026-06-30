@@ -53,7 +53,7 @@ The only prerequisite is [Docker](https://docs.docker.com/get-docker/) with Comp
 Hot-reload on every file change: cargo-watch recompiles the backend in a few seconds, dx serve reloads the frontend WASM in the browser.
 
 ```sh
-# First run — builds the dev images (takes ~10 minutes, cached afterwards)
+# First run - builds the dev images (takes ~10 minutes, cached afterwards)
 docker compose -f docker-compose.dev.yml up --build
 
 # Subsequent runs
@@ -90,7 +90,7 @@ cp .env.example .env
 |------------------|------------------------------|--------------------------------------|
 | `ADMIN_EMAIL`    | `admin@example.com`          | Email of the initial admin account   |
 | `ADMIN_PASSWORD` | `changeme`                   | Password of the initial admin account |
-| `JWT_SECRET`     | `change_me_in_production`    | Secret used to sign JWT tokens — **change this in production** |
+| `JWT_SECRET`     | `change_me_in_production`    | Secret used to sign JWT tokens - **change this in production** |
 
 The initial admin account is created automatically on first start if it does not already exist.
 
@@ -101,8 +101,8 @@ The initial admin account is created automatically on first start if it does not
 #### Requirements
 
 - [Rust](https://rustup.rs/) ≥ 1.80
-- [Dioxus CLI](https://dioxuslabs.com/learn/0.6/getting_started) — `cargo install dioxus-cli`
-- [Tailwind CSS CLI](https://github.com/tailwindlabs/tailwindcss/releases/latest) — standalone binary, no Node.js required
+- [Dioxus CLI](https://dioxuslabs.com/learn/0.6/getting_started) - `cargo install dioxus-cli`
+- [Tailwind CSS CLI](https://github.com/tailwindlabs/tailwindcss/releases/latest) - standalone binary, no Node.js required
 - `wasm32-unknown-unknown` target
 - A running PostgreSQL instance
 
@@ -132,11 +132,11 @@ cargo run -p backend
 Two terminals running in parallel:
 
 ```sh
-# Terminal 1 — Tailwind CSS (watch mode)
+# Terminal 1 - Tailwind CSS (watch mode)
 cd frontend
 tailwindcss -i input.css -o assets/tailwind.css --watch
 
-# Terminal 2 — Dioxus dev server
+# Terminal 2 - Dioxus dev server
 cd frontend
 API_BASE=http://localhost:3000 dx serve
 # UI available at http://localhost:8080
@@ -156,4 +156,4 @@ API_BASE=http://localhost:3000 dx serve
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT - see [LICENSE](LICENSE)

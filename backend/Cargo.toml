@@ -11,7 +11,14 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "chrono", "uuid", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "chrono", "uuid", "json", "migrate", "macros"] }
 bcrypt = "0.15"
 jsonwebtoken = "9"
 uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "json", "gzip"] }
+rust_xlsxwriter = "0.82"
+calamine = { version = "0.26", features = ["dates"] }
+prost = "0.13"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+csv = "1.3"

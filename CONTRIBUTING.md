@@ -73,7 +73,7 @@ docs: update widget table in README
 
 - `cargo fmt` is enforced in CI.
 - `cargo clippy -- -D warnings` must pass.
-- No `unwrap()` in production paths — use `?` or explicit error handling.
+- No `unwrap()` in production paths - use `?` or explicit error handling.
 - Comments only when the *why* is non-obvious.
 
 ## Reporting issues

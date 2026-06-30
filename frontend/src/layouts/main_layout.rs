@@ -14,6 +14,7 @@ const NAV_ITEM_ACTIVE: &str = "flex items-center gap-3 rounded-md px-3 py-2 text
 pub fn MainLayout() -> Element {
     let route = use_route::<Route>();
     let is_devices = matches!(route, Route::Home {});
+    let is_screens = matches!(route, Route::Screens {} | Route::ScreenEditor { .. });
     let is_users = matches!(route, Route::Users {});
     let nav = use_navigator();
 
@@ -42,6 +43,12 @@ pub fn MainLayout() -> Element {
                             class: if is_devices { NAV_ITEM_ACTIVE } else { NAV_ITEM },
                             Icon { name: "monitor-dot", size: "18" }
                             "Devices"
+                        }
+                        Link {
+                            to: Route::Screens {},
+                            class: if is_screens { NAV_ITEM_ACTIVE } else { NAV_ITEM },
+                            Icon { name: "presentation", size: "18" }
+                            "Screens"
                         }
                         Link {
                             to: Route::Users {},

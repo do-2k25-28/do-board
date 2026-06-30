@@ -26,6 +26,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change_me_in_dev}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      GTFS_STATIC_URL: ${GTFS_STATIC_URL:-https://data.montpellier3m.fr/GTFS/Urbain/GTFS.zip}
+      GTFS_RT_URL: ${GTFS_RT_URL:-https://data.montpellier3m.fr/GTFS/Urbain/TripUpdate.pb}
     ports:
       - "3000:3000"
     depends_on:
