@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
-use shared::Device;
+use shared::{Device, Screen};
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -97,7 +97,6 @@ pub fn Home() -> Element {
                 }
             }
 
-            // Search + filters
             div { class: "flex flex-col sm:flex-row gap-3", style: "margin-bottom: 2rem",
                 input {
                     class: "flex-1 text-sm border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-1 focus:ring-ring",
@@ -172,13 +171,19 @@ fn FilterGroup(options: Vec<(&'static str, &'static str)>, value: Signal<&'stati
 fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
     let mut show_save_form = use_signal(|| false);
     let is_saved = device.saved;
+    let is_online = device.online;
     let name_init = device.name.clone();
     let mut save_name = use_signal(|| device.name.clone().unwrap_or_default());
     let mut saving = use_signal(|| false);
     let mut saved = use_signal(move || is_saved);
     let mut display_name: Signal<Option<String>> = use_signal(move || name_init);
-    // Signal so it is Copy and can be captured in multiple closures
     let device_id = use_signal(|| device.id.clone());
+
+    // Push screen state
+    let mut push_open = use_signal(|| false);
+    let mut push_screens: Signal<Vec<Screen>> = use_signal(Vec::new);
+    let mut push_screen_id: Signal<Option<String>> = use_signal(|| None);
+    let mut pushing = use_signal(|| false);
 
     let do_save = move || {
         let id = device_id.read().clone();
@@ -204,6 +209,48 @@ fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
                 show_save_form.set(false);
                 on_saved.call(());
             }
+        });
+    };
+
+    let mut on_push_toggle = move || {
+        let was_open = push_open();
+        push_open.set(!was_open);
+        if !was_open {
+            // Opening - fetch available screens
+            spawn(async move {
+                let token = crate::auth::get_token().unwrap_or_default();
+                if let Ok(resp) = Request::get(&format!("{API_BASE}/api/screens"))
+                    .header("Authorization", &format!("Bearer {token}"))
+                    .send()
+                    .await
+                {
+                    if let Ok(screens) = resp.json::<Vec<Screen>>().await {
+                        push_screens.set(screens);
+                        push_screen_id.set(None);
+                    }
+                }
+            });
+        }
+    };
+
+    let do_push = move || {
+        let Some(screen_id) = push_screen_id() else {
+            return;
+        };
+        let id = device_id.read().clone();
+        spawn(async move {
+            pushing.set(true);
+            let token = crate::auth::get_token().unwrap_or_default();
+            let _ = Request::post(&format!("{API_BASE}/api/devices/{id}/push-screen"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .json(&shared::PushScreenRequest {
+                    screen_id: screen_id.clone(),
+                })
+                .unwrap()
+                .send()
+                .await;
+            pushing.set(false);
+            push_open.set(false);
         });
     };
 
@@ -273,6 +320,43 @@ fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
                         disabled: saving(),
                         onclick: move |_| do_save(),
                         if saving() { "…" } else { "Confirm" }
+                    }
+                }
+            }
+
+            // Push screen panel (online devices only)
+            if is_online {
+                button {
+                    class: "text-xs px-3 py-1.5 rounded-md border border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground transition-colors w-full",
+                    onclick: move |_| on_push_toggle(),
+                    if push_open() { "Cancel" } else { "Push a screen →" }
+                }
+
+                if push_open() {
+                    div { class: "flex flex-col gap-2",
+                        if push_screens.read().is_empty() {
+                            p { class: "text-xs text-muted-foreground text-center py-2",
+                                "No screens available - create one first"
+                            }
+                        } else {
+                            select {
+                                class: "text-sm border rounded-md px-2 py-1.5 bg-background w-full focus:outline-none focus:ring-1 focus:ring-ring",
+                                onchange: move |e| {
+                                    let val = e.value();
+                                    push_screen_id.set(if val.is_empty() { None } else { Some(val) });
+                                },
+                                option { value: "", "Select a screen…" }
+                                for screen in push_screens.read().iter() {
+                                    option { value: "{screen.id}", "{screen.name}" }
+                                }
+                            }
+                            button {
+                                class: "text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 w-full",
+                                disabled: push_screen_id().is_none() || pushing(),
+                                onclick: move |_| do_push(),
+                                if pushing() { "Pushing…" } else { "Push to device" }
+                            }
+                        }
                     }
                 }
             }

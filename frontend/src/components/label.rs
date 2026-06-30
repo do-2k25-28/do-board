@@ -13,7 +13,9 @@ pub struct LabelProps {
 pub fn Label(props: LabelProps) -> Element {
     rsx! {
         label {
-            r#for: props.html_for,
+            // Omit the `for` attribute entirely when no id is given so the
+            // browser doesn't call getElementById("") and emit a console warning.
+            r#for: (!props.html_for.is_empty()).then(|| props.html_for.clone()),
             class: format!(
                 "text-sm leading-none font-medium select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-50 {}",
                 props.class

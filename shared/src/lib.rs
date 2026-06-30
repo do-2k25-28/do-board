@@ -20,42 +20,127 @@ pub struct SaveDeviceRequest {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Widget {
-    pub id: String,
-    pub widget_type: WidgetType,
-    pub position: Position,
-    pub size: Size,
-}
+// ── Screens & Slides ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WidgetType {
-    Weather,
-    Transport,
-    Birthdays,
-    Iframe { url: String },
-    Clock,
-    Planning,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Position {
-    pub x: u32,
-    pub y: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Size {
-    pub width: u32,
-    pub height: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Dashboard {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Screen {
     pub id: String,
     pub name: String,
-    pub widgets: Vec<Widget>,
+    pub slides: Vec<Slide>,
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PushScreenRequest {
+    pub screen_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SlideTransition {
+    None,
+    #[default]
+    Fade,
+    SlideLeft,
+    SlideRight,
+    SlideUp,
+    SlideDown,
+    Zoom,
+}
+
+fn default_weather_days() -> u8 {
+    1
+}
+
+fn default_transition_duration_ms() -> u32 {
+    500
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Slide {
+    pub id: String,
+    pub duration_secs: u32,
+    pub config: SlideConfig,
+    #[serde(default)]
+    pub transition: SlideTransition,
+    #[serde(default = "default_transition_duration_ms")]
+    pub transition_duration_ms: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SlideConfig {
+    Weather {
+        location: String,
+        #[serde(default = "default_weather_days")]
+        days: u8,
+    },
+    Transport {
+        provider: TransportProvider,
+        stop_id: String,
+        stop_name: String,
+        #[serde(default)]
+        extra_stop_ids: Vec<String>,
+    },
+    Birthdays {
+        entries: Vec<BirthdayEntry>,
+    },
+    Iframe {
+        url: String,
+        #[serde(default)]
+        cookies: Vec<KvEntry>,
+        #[serde(default)]
+        local_storage: Vec<KvEntry>,
+    },
+    Clock {
+        clocks: Vec<ClockConfig>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportProvider {
+    Tam,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BirthdayEntry {
+    pub name: String,
+    /// dd-mm-yyyy format
+    pub date: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KvEntry {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClockConfig {
+    pub timezone: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    pub style: ClockStyle,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockStyle {
+    Digital,
+    Analog,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateScreenRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateScreenRequest {
+    pub name: String,
+    pub slides: Vec<Slide>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
