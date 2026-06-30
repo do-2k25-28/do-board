@@ -3,13 +3,11 @@ use crate::components::{Button, ButtonSize, ButtonVariant, Icon, Input, Label};
 use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
-use js_sys;
 use shared::{
     BirthdayEntry, ClockConfig, ClockStyle, KvEntry, Screen, Slide, SlideConfig, SlideTransition,
     TransportProvider, UpdateScreenRequest,
 };
 use uuid::Uuid;
-use wasm_bindgen;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -21,7 +19,6 @@ struct StopLineResult {
     code: String,
     color: String,
     text_color: String,
-    mode: String,
 }
 
 #[derive(Clone, serde::Deserialize)]

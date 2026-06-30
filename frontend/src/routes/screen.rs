@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use serde::Deserialize;
-use serde_json;
 use shared::{ClockConfig, ClockStyle, Screen as SharedScreen, SlideConfig, SlideTransition};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -60,7 +59,7 @@ fn wmo_emoji(code: u16) -> &'static str {
         66 | 67 => "🌧️",
         71 | 73 | 75 => "❄️",
         77 => "🌨️",
-        80 | 81 | 82 => "🌦️",
+        80..=82 => "🌦️",
         85 | 86 => "🌨️",
         95 => "⛈️",
         96 | 99 => "⛈️",
@@ -81,7 +80,7 @@ fn wmo_label(code: u16) -> &'static str {
         66 | 67 => "Freezing rain",
         71 | 73 | 75 => "Snow",
         77 => "Snow grains",
-        80 | 81 | 82 => "Rain showers",
+        80..=82 => "Rain showers",
         85 | 86 => "Snow showers",
         95 => "Thunderstorm",
         96 | 99 => "Thunderstorm with hail",
@@ -115,10 +114,10 @@ fn percent_encode(s: &str) -> String {
 
 /// Convert `https://host/path` → `https/host/path` (trailing slash if no path).
 fn url_to_proxy_path(url: &str) -> String {
-    let (scheme, rest) = if url.starts_with("https://") {
-        ("https", &url[8..])
-    } else if url.starts_with("http://") {
-        ("http", &url[7..])
+    let (scheme, rest) = if let Some(stripped) = url.strip_prefix("https://") {
+        ("https", stripped)
+    } else if let Some(stripped) = url.strip_prefix("http://") {
+        ("http", stripped)
     } else {
         return url.to_string();
     };
@@ -429,7 +428,7 @@ pub fn Screen() -> Element {
                 let dur = screen
                     .as_ref()
                     .and_then(|s| s.slides.get(current_slide()))
-                    .map(|sl| sl.duration_secs as u32 * 1000)
+                    .map(|sl| sl.duration_secs * 1000)
                     .unwrap_or(1000);
                 (dur, loaded)
             };
@@ -596,9 +595,9 @@ pub fn Screen() -> Element {
                 SlideConfig::Birthdays { entries } => {
                     let today = {
                         let d = js_sys::Date::new_0();
-                        format!("{:02}-{:02}", d.get_date() as u32, d.get_month() as u32 + 1)
+                        format!("{:02}-{:02}", d.get_date(), d.get_month() + 1)
                     };
-                    let current_year = js_sys::Date::new_0().get_full_year() as u32;
+                    let current_year = js_sys::Date::new_0().get_full_year();
                     let today_entries: Vec<_> = entries
                         .iter()
                         .filter(|e| e.date.get(..5) == Some(today.as_str()))
