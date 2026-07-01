@@ -173,3 +173,10 @@ pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
 }
+
+/// Used by an admin to reset another user's password - no current password
+/// required, unlike `ChangePasswordRequest` which is for self-service.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetPasswordRequest {
+    pub new_password: String,
+}

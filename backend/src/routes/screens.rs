@@ -1,10 +1,8 @@
 use crate::auth::AuthUser;
+use crate::pubsub;
 use crate::state::AppState;
 use axum::{
-    extract::{
-        ws::Message,
-        {Path, State},
-    },
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
@@ -140,28 +138,17 @@ pub async fn update_screen(
 
     let screen = to_screen(row);
 
-    // Push updated screen to all connected devices currently showing it.
-    // Collect device IDs first (drop the lock before acquiring device_senders).
-    let devices_to_notify: Vec<String> = {
-        let device_screens = state.device_screens.lock().await;
-        device_screens
-            .iter()
-            .filter(|(_, sid)| *sid == &id)
-            .map(|(did, _)| did.clone())
-            .collect()
-    };
+    // Push the updated screen to every device currently displaying it,
+    // wherever (which replica) they happen to be connected.
+    let devices_to_notify: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM devices WHERE current_screen_id = $1 AND online = TRUE")
+            .bind(uuid)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
 
-    if !devices_to_notify.is_empty() {
-        let msg_text =
-            serde_json::to_string(&serde_json::json!({ "type": "set_screen", "screen": &screen }))
-                .unwrap_or_default();
-
-        let senders = state.device_senders.lock().await;
-        for device_id in &devices_to_notify {
-            if let Some(tx) = senders.get(device_id) {
-                let _ = tx.send(Message::Text(msg_text.clone().into()));
-            }
-        }
+    for device_id in devices_to_notify {
+        let _ = pubsub::notify_device_push(&state.db, device_id, uuid).await;
     }
 
     Ok(Json(screen))

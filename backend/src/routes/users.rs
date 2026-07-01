@@ -1,8 +1,12 @@
 use crate::auth::{AuthUser, UserRow};
 use crate::state::AppState;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use bcrypt::{hash, verify, DEFAULT_COST};
-use shared::{ChangePasswordRequest, CreateUserRequest, User};
+use shared::{ChangePasswordRequest, CreateUserRequest, SetPasswordRequest, User};
 use uuid::Uuid;
 
 pub async fn list_users(
@@ -85,6 +89,33 @@ pub async fn change_password(
         .execute(&state.db)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Lets any signed-in (i.e. admin) user reset another user's password
+/// without knowing their current one.
+pub async fn set_user_password(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetPasswordRequest>,
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    let user_id = Uuid::parse_str(&id).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid user ID"))?;
+
+    let new_hash = hash(&req.new_password, DEFAULT_COST)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Hash error"))?;
+
+    let result = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(new_hash)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "User not found"));
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
