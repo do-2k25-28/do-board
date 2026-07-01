@@ -1,0 +1,23 @@
+do-board has been deployed.
+
+{{- if .Values.ingress.enabled }}
+
+Application URL:
+  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+
+No Ingress is enabled. Reach the frontend with:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "do-board.fullname" . }}-frontend 8080:{{ .Values.frontend.service.port }}
+  open http://localhost:8080
+{{- end }}
+
+{{- if not .Values.existingSecret }}
+{{- if or (eq .Values.env.jwtSecret "change_me_in_production") (eq .Values.env.adminPassword "changeme") }}
+
+WARNING: you are using the default JWT secret and/or admin password.
+Set --set env.jwtSecret=... and --set env.adminPassword=... (or provide
+existingSecret) before exposing this release outside your cluster.
+{{- end }}
+{{- end }}
+
+Initial admin login: {{ .Values.env.adminEmail }}

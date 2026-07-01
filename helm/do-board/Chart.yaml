@@ -1,0 +1,14 @@
+apiVersion: v2
+name: do-board
+description: Open-source customizable dashboard for TV displays
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/do-2k25-28/do-board
+sources:
+  - https://github.com/do-2k25-28/do-board
+dependencies:
+  - name: postgresql
+    version: ">=15.0.0 <17.0.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
