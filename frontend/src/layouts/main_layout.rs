@@ -27,8 +27,10 @@ pub fn MainLayout() -> Element {
         .unwrap_or_else(|| "A".to_string());
 
     let on_logout = move |_| {
-        auth::logout();
-        nav.replace(Route::Login {});
+        spawn(async move {
+            auth::logout().await;
+            nav.replace(Route::Login {});
+        });
     };
 
     rsx! {

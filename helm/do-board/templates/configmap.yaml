@@ -7,3 +7,6 @@ metadata:
 data:
   GTFS_STATIC_URL: {{ .Values.config.gtfsStaticUrl | quote }}
   GTFS_RT_URL: {{ .Values.config.gtfsRtUrl | quote }}
+  # Only mark the auth cookie Secure when the app is actually served over
+  # HTTPS - browsers silently drop Secure cookies received over plain HTTP.
+  COOKIE_SECURE: {{ .Values.ingress.tls.enabled | quote }}

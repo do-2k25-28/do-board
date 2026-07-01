@@ -7,17 +7,20 @@ mod routes;
 mod screen_query;
 mod state;
 
-use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use sqlx::postgres::PgPoolOptions;
 use state::{AppState, GtfsStore};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 #[tokio::main]
 async fn main() {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret =
         std::env::var("JWT_SECRET").unwrap_or_else(|_| "change_me_in_production".to_string());
+    let cookie_secure = std::env::var("COOKIE_SECURE")
+        .map(|v| v == "true")
+        .unwrap_or(false);
 
     let db = PgPoolOptions::new()
         .max_connections(5)
@@ -51,17 +54,21 @@ async fn main() {
         device_senders: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         db,
         jwt_secret,
+        cookie_secure,
         gtfs: gtfs_store,
     };
 
     pubsub::spawn_device_push_listener(state.clone());
 
+    // Credentialed requests (needed so the browser sends the HttpOnly auth
+    // cookie) can't use a literal `*` for origin/methods per the Fetch spec -
+    // mirror the request instead of hardcoding one origin, since the chart
+    // supports an arbitrary `ingress.host`.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        // Authorization must be listed explicitly - wildcards are not accepted
-        // for credentialed headers by Firefox and other strict browsers.
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE, ACCEPT]);
+        .allow_origin(AllowOrigin::mirror_request())
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers([CONTENT_TYPE, ACCEPT])
+        .allow_credentials(true);
 
     let app = routes::router().layer(cors).with_state(state);
 

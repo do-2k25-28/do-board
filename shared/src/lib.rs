@@ -158,8 +158,11 @@ pub struct LoginRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginResponse {
-    pub token: String,
     pub user: User,
+    /// Unix timestamp (seconds) the session cookie expires at. Informational
+    /// only, for client-side UX (e.g. proactively redirecting to /login) -
+    /// the actual JWT lives in an HttpOnly cookie the client never sees.
+    pub expires_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

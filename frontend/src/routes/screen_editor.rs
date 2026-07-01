@@ -1,4 +1,3 @@
-use crate::auth;
 use crate::components::{Button, ButtonSize, ButtonVariant, Icon, Input, Label};
 use crate::routes::Route;
 use dioxus::prelude::*;
@@ -8,6 +7,7 @@ use shared::{
     TransportProvider, UpdateScreenRequest,
 };
 use uuid::Uuid;
+use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -152,9 +152,8 @@ pub fn ScreenEditor(id: String) -> Element {
     use_effect(move || {
         let sid = screen_id.read().clone();
         spawn(async move {
-            let token = auth::get_token().unwrap_or_default();
             if let Ok(resp) = Request::get(&format!("{API_BASE}/api/screens/{sid}"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .send()
                 .await
             {
@@ -172,9 +171,8 @@ pub fn ScreenEditor(id: String) -> Element {
         spawn(async move {
             saving.set(true);
             save_error.set(None);
-            let token = auth::get_token().unwrap_or_default();
             let result = Request::put(&format!("{API_BASE}/api/screens/{sid}"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .json(&UpdateScreenRequest {
                     name: screen_name(),
                     slides: slides.read().clone(),

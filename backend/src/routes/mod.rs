@@ -19,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/devices/{id}/save", post(devices::save_device))
         .route("/api/devices/{id}/push-screen", post(devices::push_screen))
         .route("/api/auth/login", post(login::login))
+        .route("/api/auth/logout", post(login::logout))
         .route(
             "/api/users",
             get(users::list_users).post(users::create_user),

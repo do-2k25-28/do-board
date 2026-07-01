@@ -4,6 +4,7 @@ use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use shared::{CreateUserRequest, SetPasswordRequest, User};
+use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -25,13 +26,8 @@ pub fn Users() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            let token = match auth::get_token() {
-                Some(t) => t,
-                None => return,
-            };
-
             match Request::get(&format!("{API_BASE}/api/users"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .send()
                 .await
             {
@@ -43,7 +39,7 @@ pub fn Users() -> Element {
                     Err(_) => fetch_error.set(Some("Failed to parse users.".to_string())),
                 },
                 Ok(resp) if resp.status() == 401 => {
-                    auth::logout();
+                    auth::logout().await;
                     nav.replace(Route::Login {});
                     return;
                 }
@@ -68,15 +64,6 @@ pub fn Users() -> Element {
             creating.set(true);
             create_error.set(None);
 
-            let token = match auth::get_token() {
-                Some(t) => t,
-                None => {
-                    create_error.set(Some("Not authenticated.".to_string()));
-                    creating.set(false);
-                    return;
-                }
-            };
-
             let body = match serde_json::to_string(&CreateUserRequest {
                 email: email_val,
                 password: pass_val,
@@ -91,7 +78,7 @@ pub fn Users() -> Element {
 
             match Request::post(&format!("{API_BASE}/api/users"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .body(body)
                 .unwrap()
                 .send()
@@ -235,7 +222,6 @@ fn UserRow(user: User) -> Element {
         spawn(async move {
             saving.set(true);
 
-            let token = auth::get_token().unwrap_or_default();
             let id = user_id.read().clone();
 
             let body = match serde_json::to_string(&SetPasswordRequest {
@@ -251,7 +237,7 @@ fn UserRow(user: User) -> Element {
 
             match Request::put(&format!("{API_BASE}/api/users/{id}/password"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .body(body)
                 .unwrap()
                 .send()

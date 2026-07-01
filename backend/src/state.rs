@@ -49,5 +49,9 @@ pub struct AppState {
     pub device_senders: DeviceSenders,
     pub db: PgPool,
     pub jwt_secret: String,
+    /// Whether to mark the auth cookie `Secure`. Only safe to enable when the
+    /// app is actually served over HTTPS (e.g. behind the Helm/Traefik
+    /// ingress) - browsers refuse `Secure` cookies over plain HTTP.
+    pub cookie_secure: bool,
     pub gtfs: GtfsStore,
 }
