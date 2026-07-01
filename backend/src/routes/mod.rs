@@ -1,6 +1,7 @@
 mod birthdays;
 mod devices;
 mod login;
+mod media;
 mod proxy;
 mod screens;
 mod transport;
@@ -42,6 +43,8 @@ pub fn router() -> Router<AppState> {
                 .delete(screens::delete_screen),
         )
         .route("/api/weather", get(weather::get_weather))
+        .route("/api/media", post(media::upload_image))
+        .route("/api/media/{id}", get(media::get_media))
         .route("/api/birthdays/template", get(birthdays::get_template))
         .route("/api/birthdays/import", post(birthdays::import_xlsx))
         .route("/api/transport/departures", get(transport::get_departures))

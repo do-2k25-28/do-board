@@ -14,6 +14,8 @@ pub struct ProxyQuery {
     pub ls: String,
     #[serde(default)]
     pub cookies: String,
+    #[serde(default)]
+    pub scroll_y: u8,
 }
 
 /// Path-based reverse proxy: `/api/iframe-proxy/{scheme}/{host}/{*rest}`
@@ -55,7 +57,11 @@ pub async fn proxy_all(
         .query()
         .map(|qs| {
             qs.split('&')
-                .filter(|p| !p.starts_with("ls=") && !p.starts_with("cookies="))
+                .filter(|p| {
+                    !p.starts_with("ls=")
+                        && !p.starts_with("cookies=")
+                        && !p.starts_with("scroll_y=")
+                })
                 .collect::<Vec<_>>()
                 .join("&")
         })
@@ -195,7 +201,14 @@ pub async fn proxy_all(
         Err(_) => return (StatusCode::BAD_GATEWAY, "Failed to read HTML body").into_response(),
     };
 
-    let modified = rewrite_html(&body, &proxy_base, &target_origin, &ls, &cookies_map);
+    let modified = rewrite_html(
+        &body,
+        &proxy_base,
+        &target_origin,
+        &ls,
+        &cookies_map,
+        q.scroll_y,
+    );
 
     (
         status,
@@ -216,6 +229,7 @@ fn rewrite_html(
     target_origin: &str,
     ls: &HashMap<String, String>,
     cookies_map: &HashMap<String, String>,
+    scroll_y_percent: u8,
 ) -> String {
     // 1. Remove SRI integrity (hashes would fail since we serve from our origin)
     let html = remove_attr_with_value(html, "integrity");
@@ -246,7 +260,7 @@ fn rewrite_html(
     let html = html.replace(&format!("'{}'", target_origin), &format!("'{proxy_base}/'"));
 
     // 5. Inject script (localStorage + cookies + fetch/XHR patch + disable SW)
-    let injection = build_injection(ls, cookies_map, proxy_base, target_origin);
+    let injection = build_injection(ls, cookies_map, proxy_base, target_origin, scroll_y_percent);
     inject_after_head(&html, &injection)
 }
 
@@ -338,6 +352,7 @@ fn build_injection(
     cookies_map: &HashMap<String, String>,
     proxy_base: &str,
     target_origin: &str,
+    scroll_y_percent: u8,
 ) -> String {
     let pb_js = serde_json::to_string(proxy_base).unwrap_or_default();
     let to_js = serde_json::to_string(target_origin).unwrap_or_default();
@@ -398,6 +413,27 @@ if(navigator.serviceWorker)try{
 }catch(e){}
 })()</script>"#,
     );
+
+    // Scroll to a percentage of the page height (0 = top, 50 = middle, 100 = bottom).
+    // Retried at increasing delays since content on the target page (images,
+    // async-rendered sections, etc.) can still be growing the page height
+    // after the initial load event fires.
+    if scroll_y_percent > 0 {
+        let p = scroll_y_percent.min(100);
+        s.push_str(&format!(
+            r#"<script>(function(){{
+function _doScroll(){{try{{
+  var d=document.documentElement,b=document.body;
+  var h=Math.max(d.scrollHeight,b.scrollHeight)-window.innerHeight;
+  if(h>0)window.scrollTo(0,Math.round(h*{p}/100));
+}}catch(e){{}}}}
+window.addEventListener('load',function(){{
+  _doScroll();
+  [300,800,1500,3000].forEach(function(t){{setTimeout(_doScroll,t)}});
+}});
+}})()</script>"#
+        ));
+    }
 
     s
 }

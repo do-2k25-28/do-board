@@ -92,9 +92,21 @@ pub enum SlideConfig {
         cookies: Vec<KvEntry>,
         #[serde(default)]
         local_storage: Vec<KvEntry>,
+        /// Vertical scroll position as a percentage (0-100) of the page's
+        /// scrollable height. 0 = top, 50 = middle, 100 = bottom.
+        #[serde(default)]
+        scroll_y_percent: u8,
     },
     Clock {
         clocks: Vec<ClockConfig>,
+    },
+    Image {
+        /// Path to an uploaded image, e.g. `/api/media/{id}`.
+        url: String,
+    },
+    Video {
+        /// A YouTube URL (watch/share/embed/shorts link) or bare video ID.
+        url: String,
     },
 }
 
