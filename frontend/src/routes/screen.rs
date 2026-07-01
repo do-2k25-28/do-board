@@ -357,9 +357,10 @@ pub fn Screen() -> Element {
     let mut transition_key = use_signal(|| 0u32);
     let mut weather_cache: Signal<HashMap<String, WeatherData>> = use_signal(HashMap::new);
 
-    // Hold the WebSocket alive for the lifetime of the component
-    let ws: Signal<Option<web_sys::WebSocket>> =
-        use_signal(|| web_sys::WebSocket::new(&ws_url()).ok());
+    // Hold the WebSocket alive for the lifetime of the component. Bumping
+    // `reconnect_tick` tears down and re-establishes it.
+    let mut ws: Signal<Option<web_sys::WebSocket>> = use_signal(|| None);
+    let mut reconnect_tick = use_signal(|| 0u32);
 
     // Fetch default screen on mount
     use_effect(move || {
@@ -403,29 +404,63 @@ pub fn Screen() -> Element {
         }
     });
 
-    // WebSocket: receive pushed screens from backend
+    // WebSocket: receive pushed screens from backend. Re-runs (creating a
+    // fresh connection) whenever `reconnect_tick` is bumped.
     use_effect(move || {
-        if let Some(socket) = ws.read().as_ref() {
-            let cb = Closure::<dyn FnMut(_)>::new(move |event: web_sys::MessageEvent| {
-                if let Some(text) = event.data().as_string() {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if val.get("type").and_then(|t| t.as_str()) == Some("set_screen") {
-                            if let Some(sv) = val.get("screen") {
-                                if let Ok(screen) =
-                                    serde_json::from_value::<SharedScreen>(sv.clone())
-                                {
-                                    current_screen.set(Some(screen));
-                                    current_slide.set(0);
-                                    transition_key.set(transition_key() + 1);
-                                }
+        let _ = reconnect_tick();
+
+        let Ok(socket) = web_sys::WebSocket::new(&ws_url()) else {
+            return;
+        };
+
+        let onmessage_cb = Closure::<dyn FnMut(_)>::new(move |event: web_sys::MessageEvent| {
+            if let Some(text) = event.data().as_string() {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if val.get("type").and_then(|t| t.as_str()) == Some("set_screen") {
+                        if let Some(sv) = val.get("screen") {
+                            if let Ok(screen) = serde_json::from_value::<SharedScreen>(sv.clone()) {
+                                current_screen.set(Some(screen));
+                                current_slide.set(0);
+                                transition_key.set(transition_key() + 1);
                             }
                         }
                     }
                 }
+            }
+        });
+        socket.set_onmessage(Some(onmessage_cb.as_ref().unchecked_ref()));
+        onmessage_cb.forget();
+
+        // Idle-timeout intermediaries (reverse proxies, load balancers,
+        // conntrack...) can silently drop a quiet WebSocket. When that
+        // happens the backend marks the device offline, but without this the
+        // page itself never notices - slides keep playing locally from
+        // cached state while the dashboard shows the TV as gone. Reconnect
+        // after a short delay instead.
+        let onclose_cb = Closure::<dyn FnMut(_)>::new(move |_event: web_sys::CloseEvent| {
+            spawn(async move {
+                TimeoutFuture::new(3_000).await;
+                reconnect_tick.set(reconnect_tick() + 1);
             });
-            socket.set_onmessage(Some(cb.as_ref().unchecked_ref()));
-            cb.forget();
-        }
+        });
+        socket.set_onclose(Some(onclose_cb.as_ref().unchecked_ref()));
+        onclose_cb.forget();
+
+        // Heartbeat: send a no-op message often enough to keep any
+        // intermediary's idle timeout from ever triggering, and to keep the
+        // backend's `last_seen` fresh.
+        let heartbeat_socket = socket.clone();
+        spawn(async move {
+            loop {
+                TimeoutFuture::new(20_000).await;
+                if heartbeat_socket.ready_state() != web_sys::WebSocket::OPEN {
+                    break;
+                }
+                let _ = heartbeat_socket.send_with_str("ping");
+            }
+        });
+
+        ws.set(Some(socket));
     });
 
     // Slide timer.

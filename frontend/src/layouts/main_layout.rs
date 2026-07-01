@@ -89,7 +89,7 @@ pub fn MainLayout() -> Element {
                 }
             }
             div { class: "flex flex-1 flex-col overflow-hidden",
-                header { class: "flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background text-foreground px-6",
+                header { class: "flex h-14 shrink-0 items-center gap-3 border-b bg-background text-foreground px-6",
                     Button {
                         variant: ButtonVariant::Ghost,
                         size: ButtonSize::Icon,
@@ -97,7 +97,7 @@ pub fn MainLayout() -> Element {
                         onclick: move |_| sidebar_open.set(!sidebar_open()),
                         Icon { name: "menu", size: "20" }
                     }
-                    div { class: "flex items-center gap-3",
+                    div { class: "flex items-center gap-3 ml-auto",
                         ThemeToggle {}
                         Button {
                             variant: ButtonVariant::Ghost,
