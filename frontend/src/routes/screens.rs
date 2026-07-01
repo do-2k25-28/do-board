@@ -42,7 +42,7 @@ pub fn Screens() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            fetch_screens(screens, fetch_error, loading).await;
+            fetch_screens(screens, fetch_error, loading, nav).await;
         });
     });
 
@@ -78,7 +78,7 @@ pub fn Screens() -> Element {
                 .header("Authorization", &format!("Bearer {token}"))
                 .send()
                 .await;
-            fetch_screens(screens, fetch_error, loading).await;
+            fetch_screens(screens, fetch_error, loading, nav).await;
         });
     };
 
@@ -89,7 +89,7 @@ pub fn Screens() -> Element {
                 .header("Authorization", &format!("Bearer {token}"))
                 .send()
                 .await;
-            fetch_screens(screens, fetch_error, loading).await;
+            fetch_screens(screens, fetch_error, loading, nav).await;
         });
     };
 
@@ -172,6 +172,7 @@ async fn fetch_screens(
     mut screens: Signal<Vec<Screen>>,
     mut fetch_error: Signal<Option<String>>,
     mut loading: Signal<bool>,
+    nav: dioxus::router::Navigator,
 ) {
     let token = auth::get_token().unwrap_or_default();
     match Request::get(&format!("{API_BASE}/api/screens"))
@@ -186,6 +187,11 @@ async fn fetch_screens(
             }
             Err(_) => fetch_error.set(Some("Failed to parse response.".into())),
         },
+        Ok(resp) if resp.status() == 401 => {
+            auth::logout();
+            nav.replace(Route::Login {});
+            return;
+        }
         Ok(_) => fetch_error.set(Some("Unauthorized.".into())),
         Err(_) => fetch_error.set(Some("Cannot reach server.".into())),
     }
