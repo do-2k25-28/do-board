@@ -14,7 +14,7 @@ WORKDIR /app/frontend
 RUN dx build --release
 
 FROM nginx:alpine
-COPY --from=builder /app/frontend/dist /usr/share/nginx/html
+COPY --from=builder /app/target/dx/frontend/release/web/public /usr/share/nginx/html
 COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 ENV BACKEND_HOST=backend
 ENV BACKEND_PORT=3000
