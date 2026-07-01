@@ -1,5 +1,6 @@
 use crate::auth;
 use crate::components::{Button, ButtonVariant, Input, Label};
+use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use shared::{CreateUserRequest, SetPasswordRequest, User};
@@ -20,6 +21,7 @@ pub fn Users() -> Element {
     let mut new_password = use_signal(String::new);
     let mut create_error = use_signal(|| None::<String>);
     let mut creating = use_signal(|| false);
+    let nav = use_navigator();
 
     use_effect(move || {
         spawn(async move {
@@ -40,6 +42,11 @@ pub fn Users() -> Element {
                     }
                     Err(_) => fetch_error.set(Some("Failed to parse users.".to_string())),
                 },
+                Ok(resp) if resp.status() == 401 => {
+                    auth::logout();
+                    nav.replace(Route::Login {});
+                    return;
+                }
                 Ok(_) => fetch_error.set(Some("Unauthorized.".to_string())),
                 Err(_) => fetch_error.set(Some("Cannot reach server.".to_string())),
             }

@@ -44,6 +44,7 @@ services:
       - cargo-registry:/usr/local/cargo/registry
     environment:
       API_BASE: http://localhost:3000
+      WS_URL: ws://localhost:3000/ws
     ports:
       - "8080:8080"
     depends_on:
