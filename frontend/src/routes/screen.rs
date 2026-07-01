@@ -122,9 +122,7 @@ fn youtube_video_id(input: &str) -> Option<String> {
     let extract_after = |marker: &str| -> Option<String> {
         let idx = s.find(marker)? + marker.len();
         let rest = &s[idx..];
-        let end = rest
-            .find(|c: char| c == '&' || c == '?' || c == '#')
-            .unwrap_or(rest.len());
+        let end = rest.find(['&', '?', '#']).unwrap_or(rest.len());
         let id = &rest[..end];
         (!id.is_empty()).then(|| id.to_string())
     };
