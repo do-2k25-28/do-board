@@ -104,7 +104,7 @@ A Helm chart is provided in [`helm/do-board`](helm/do-board) to deploy do-board 
 - a `backend` Deployment + Service (Axum API)
 - a `frontend` Deployment + Service (nginx serving the WASM bundle, reverse-proxying `/api` and `/ws` to the backend)
 - an optional `Ingress` exposing the frontend
-- a bundled [PostgreSQL](https://github.com/bitnami/charts/tree/main/bitnami/postgresql) instance (can be disabled in favour of an external/managed database)
+- a bundled PostgreSQL `StatefulSet` + Service (plain `postgres` image, can be disabled in favour of an external/managed database)
 
 #### Images
 
@@ -127,9 +127,6 @@ Images: `ghcr.io/do-2k25-28/do-board-backend` and `ghcr.io/do-2k25-28/do-board-f
 
 ```sh
 cd helm/do-board
-
-# Fetch the bundled PostgreSQL chart dependency
-helm dependency update
 
 helm install do-board . \
   --namespace do-board --create-namespace \
@@ -158,6 +155,7 @@ kubectl port-forward -n do-board svc/do-board-frontend 8080:80
 | `env.jwtSecret` / `env.adminEmail` / `env.adminPassword` | see `values.yaml` | App credentials - **override in production**, or set `existingSecret` to a Secret you manage yourself |
 | `config.gtfsStaticUrl` / `config.gtfsRtUrl` | Montpellier TaM GTFS feeds | Public transport widget data source |
 | `postgresql.enabled`         | `true`                                          | Set to `false` to use an external database via `externalDatabase.url` |
+| `postgresql.persistence.size` | `4Gi`                                          | Size of the PVC for the bundled PostgreSQL data volume    |
 | `ingress.enabled`             | `false`                                         | Expose the frontend through an Ingress                    |
 
 See [`helm/do-board/values.yaml`](helm/do-board/values.yaml) for the full list, and run `helm show values helm/do-board` or `helm template helm/do-board` to inspect the rendered manifests before installing.

@@ -31,7 +31,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "do-board.postgresqlHost" -}}
-{{- printf "%s-postgresql" .Release.Name -}}
+{{- printf "%s-postgresql" (include "do-board.fullname" .) -}}
 {{- end -}}
 
 {{- define "do-board.databaseUrl" -}}

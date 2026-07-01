@@ -66,17 +66,27 @@ config:
   gtfsStaticUrl: "https://data.montpellier3m.fr/GTFS/Urbain/GTFS.zip"
   gtfsRtUrl: "https://data.montpellier3m.fr/GTFS/Urbain/TripUpdate.pb"
 
-# Bundled PostgreSQL (Bitnami chart). Disable and set externalDatabase.url
-# to point at a managed/external instance instead.
+# Bundled PostgreSQL (plain postgres:alpine image, no third-party chart
+# dependency). Disable and set externalDatabase.url to point at a
+# managed/external instance instead.
 postgresql:
   enabled: true
+  image:
+    repository: postgres
+    tag: "17.5-alpine"
   auth:
     username: doboard
     password: doboard_secret
     database: doboard
-  primary:
-    persistence:
-      size: 4Gi
+  persistence:
+    size: 4Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # Used only when postgresql.enabled is false.
 externalDatabase:
