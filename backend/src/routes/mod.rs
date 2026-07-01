@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
             "/api/users",
             get(users::list_users).post(users::create_user),
         )
+        .route("/api/users/me/password", put(users::change_password))
         .route(
             "/api/screens",
             get(screens::list_screens).post(screens::create_screen),

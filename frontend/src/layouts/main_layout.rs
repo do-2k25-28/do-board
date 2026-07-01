@@ -16,6 +16,7 @@ pub fn MainLayout() -> Element {
     let is_devices = matches!(route, Route::Home {});
     let is_screens = matches!(route, Route::Screens {} | Route::ScreenEditor { .. });
     let is_users = matches!(route, Route::Users {});
+    let is_settings = matches!(route, Route::Settings {});
     let nav = use_navigator();
 
     let email = auth::get_email().unwrap_or_else(|| "Admin".to_string());
@@ -56,6 +57,12 @@ pub fn MainLayout() -> Element {
                             Icon { name: "users", size: "18" }
                             "Users"
                         }
+                        Link {
+                            to: Route::Settings {},
+                            class: if is_settings { NAV_ITEM_ACTIVE } else { NAV_ITEM },
+                            Icon { name: "settings", size: "18" }
+                            "Settings"
+                        }
                     }
                 }
                 SidebarFooter {
@@ -71,7 +78,9 @@ pub fn MainLayout() -> Element {
                         Icon { name: "log-out", size: "16" }
                         "Logout"
                     }
-                    div { class: "flex items-center gap-2",
+                    Link {
+                        to: Route::Settings {},
+                        class: "flex items-center gap-2",
                         div { class: "flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold",
                             "{initials}"
                         }
