@@ -5,6 +5,7 @@ use crate::components::{
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use shared::ChangePasswordRequest;
+use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -43,15 +44,6 @@ pub fn Settings() -> Element {
         spawn(async move {
             saving.set(true);
 
-            let token = match auth::get_token() {
-                Some(t) => t,
-                None => {
-                    error.set(Some("Not authenticated.".to_string()));
-                    saving.set(false);
-                    return;
-                }
-            };
-
             let body = match serde_json::to_string(&ChangePasswordRequest {
                 current_password: current,
                 new_password: new_pass,
@@ -66,7 +58,7 @@ pub fn Settings() -> Element {
 
             match Request::put(&format!("{API_BASE}/api/users/me/password"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .body(body)
                 .unwrap()
                 .send()

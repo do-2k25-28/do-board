@@ -1,14 +1,21 @@
-use crate::auth::{Claims, UserRow};
+use crate::auth::{self, Claims, UserRow};
 use crate::state::AppState;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::State,
+    http::{header, StatusCode},
+    response::IntoResponse,
+    Json,
+};
 use bcrypt::verify;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use shared::{LoginRequest, LoginResponse, User};
 
+const SESSION_MAX_AGE_SECS: i64 = 7 * 24 * 3600;
+
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, (StatusCode, &'static str)> {
+) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
     let row = sqlx::query_as::<_, UserRow>(
         "SELECT id, email, password_hash, created_at FROM users WHERE email = $1",
     )
@@ -24,11 +31,11 @@ pub async fn login(
         return Err((StatusCode::UNAUTHORIZED, "Invalid credentials"));
     }
 
-    let exp = (chrono::Utc::now().timestamp() + 7 * 24 * 3600) as usize;
+    let expires_at = chrono::Utc::now().timestamp() + SESSION_MAX_AGE_SECS;
     let claims = Claims {
         sub: row.id.to_string(),
         email: row.email.clone(),
-        exp,
+        exp: expires_at as usize,
     };
 
     let token = encode(
@@ -38,12 +45,24 @@ pub async fn login(
     )
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Token encoding error"))?;
 
-    Ok(Json(LoginResponse {
-        token,
-        user: User {
-            id: row.id.to_string(),
-            email: row.email,
-            created_at: row.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        },
-    }))
+    let cookie = auth::build_auth_cookie(&token, SESSION_MAX_AGE_SECS, state.cookie_secure);
+
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(LoginResponse {
+            user: User {
+                id: row.id.to_string(),
+                email: row.email,
+                created_at: row.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            },
+            expires_at,
+        }),
+    ))
+}
+
+/// Clears the auth cookie. The client can't do this itself since the cookie
+/// is `HttpOnly` (by design - that's what keeps it safe from XSS).
+pub async fn logout(State(state): State<AppState>) -> impl IntoResponse {
+    let cookie = auth::build_logout_cookie(state.cookie_secure);
+    ([(header::SET_COOKIE, cookie)], StatusCode::NO_CONTENT)
 }

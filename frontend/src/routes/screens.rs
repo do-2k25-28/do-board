@@ -4,6 +4,7 @@ use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use shared::{CreateScreenRequest, Screen, SlideConfig};
+use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -53,9 +54,8 @@ pub fn Screens() -> Element {
         }
         spawn(async move {
             creating.set(true);
-            let token = auth::get_token().unwrap_or_default();
             let result = Request::post(&format!("{API_BASE}/api/screens"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .json(&CreateScreenRequest { name })
                 .unwrap()
                 .send()
@@ -73,9 +73,8 @@ pub fn Screens() -> Element {
 
     let on_delete = move |id: String| {
         spawn(async move {
-            let token = auth::get_token().unwrap_or_default();
             let _ = Request::delete(&format!("{API_BASE}/api/screens/{id}"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .send()
                 .await;
             fetch_screens(screens, fetch_error, loading, nav).await;
@@ -84,9 +83,8 @@ pub fn Screens() -> Element {
 
     let on_set_default = move |id: String| {
         spawn(async move {
-            let token = auth::get_token().unwrap_or_default();
             let _ = Request::put(&format!("{API_BASE}/api/screens/{id}/set-default"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .send()
                 .await;
             fetch_screens(screens, fetch_error, loading, nav).await;
@@ -174,9 +172,8 @@ async fn fetch_screens(
     mut loading: Signal<bool>,
     nav: dioxus::router::Navigator,
 ) {
-    let token = auth::get_token().unwrap_or_default();
     match Request::get(&format!("{API_BASE}/api/screens"))
-        .header("Authorization", &format!("Bearer {token}"))
+        .credentials(RequestCredentials::Include)
         .send()
         .await
     {
@@ -188,7 +185,7 @@ async fn fetch_screens(
             Err(_) => fetch_error.set(Some("Failed to parse response.".into())),
         },
         Ok(resp) if resp.status() == 401 => {
-            auth::logout();
+            auth::logout().await;
             nav.replace(Route::Login {});
             return;
         }

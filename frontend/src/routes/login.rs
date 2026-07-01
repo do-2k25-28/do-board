@@ -6,6 +6,7 @@ use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use shared::{LoginRequest, LoginResponse};
+use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -48,6 +49,7 @@ pub fn Login() -> Element {
 
             let result = Request::post(&format!("{API_BASE}/api/auth/login"))
                 .header("Content-Type", "application/json")
+                .credentials(RequestCredentials::Include)
                 .body(body)
                 .unwrap()
                 .send()
@@ -56,8 +58,8 @@ pub fn Login() -> Element {
             match result {
                 Ok(resp) if resp.ok() => match resp.json::<LoginResponse>().await {
                     Ok(data) => {
-                        auth::set_token(&data.token);
                         auth::set_email(&data.user.email);
+                        auth::set_session(data.expires_at);
                         nav.replace(Route::Home {});
                     }
                     Err(_) => {

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use shared::{Device, Screen};
+use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -193,9 +194,8 @@ fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
         }
         spawn(async move {
             saving.set(true);
-            let token = crate::auth::get_token().unwrap_or_default();
             let result = Request::post(&format!("{API_BASE}/api/devices/{id}/save"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .json(&shared::SaveDeviceRequest {
                     name: name_val.clone(),
                 })
@@ -218,9 +218,8 @@ fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
         if !was_open {
             // Opening - fetch available screens
             spawn(async move {
-                let token = crate::auth::get_token().unwrap_or_default();
                 if let Ok(resp) = Request::get(&format!("{API_BASE}/api/screens"))
-                    .header("Authorization", &format!("Bearer {token}"))
+                    .credentials(RequestCredentials::Include)
                     .send()
                     .await
                 {
@@ -240,9 +239,8 @@ fn DeviceCard(device: Device, on_saved: EventHandler<()>) -> Element {
         let id = device_id.read().clone();
         spawn(async move {
             pushing.set(true);
-            let token = crate::auth::get_token().unwrap_or_default();
             let _ = Request::post(&format!("{API_BASE}/api/devices/{id}/push-screen"))
-                .header("Authorization", &format!("Bearer {token}"))
+                .credentials(RequestCredentials::Include)
                 .json(&shared::PushScreenRequest {
                     screen_id: screen_id.clone(),
                 })

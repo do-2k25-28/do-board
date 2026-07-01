@@ -1,17 +1,49 @@
 use crate::state::AppState;
 use axum::{
     extract::{FromRef, FromRequestParts},
-    http::{request::Parts, StatusCode},
+    http::{header, request::Parts, HeaderValue, StatusCode},
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Name of the cookie carrying the JWT. `HttpOnly` so it's never reachable
+/// from JS (unlike `localStorage`), which is the whole point - it keeps the
+/// token safe even if an XSS bug lets an attacker run script on the page.
+pub const AUTH_COOKIE: &str = "auth_token";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub email: String,
     pub exp: usize,
+}
+
+/// Builds the `Set-Cookie` header value that logs a session in, valid for
+/// `max_age_secs`.
+pub fn build_auth_cookie(token: &str, max_age_secs: i64, secure: bool) -> HeaderValue {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "{AUTH_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}{secure_attr}"
+    ))
+    .expect("cookie value is ASCII")
+}
+
+/// Builds the `Set-Cookie` header value that clears the session cookie.
+pub fn build_logout_cookie(secure: bool) -> HeaderValue {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    HeaderValue::from_str(&format!(
+        "{AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure_attr}"
+    ))
+    .expect("cookie value is ASCII")
+}
+
+fn token_from_cookies(parts: &Parts) -> Option<&str> {
+    let cookie_header = parts.headers.get(header::COOKIE)?.to_str().ok()?;
+    cookie_header.split(';').find_map(|kv| {
+        let (name, value) = kv.trim().split_once('=')?;
+        (name == AUTH_COOKIE).then_some(value)
+    })
 }
 
 #[allow(dead_code)]
@@ -30,15 +62,8 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
 
-        let auth_header = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or((StatusCode::UNAUTHORIZED, "Missing authorization header"))?;
-
-        let token = auth_header
-            .strip_prefix("Bearer ")
-            .ok_or((StatusCode::UNAUTHORIZED, "Invalid authorization format"))?;
+        let token = token_from_cookies(parts)
+            .ok_or((StatusCode::UNAUTHORIZED, "Missing authorization cookie"))?;
 
         let token_data = decode::<Claims>(
             token,
