@@ -1,0 +1,12 @@
+CREATE TABLE devices (
+    id UUID PRIMARY KEY,
+    ip TEXT NOT NULL DEFAULT '',
+    browser TEXT NOT NULL DEFAULT '',
+    os TEXT NOT NULL DEFAULT '',
+    online BOOLEAN NOT NULL DEFAULT FALSE,
+    connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    current_screen_id UUID REFERENCES screens(id) ON DELETE SET NULL,
+    name TEXT,
+    saved BOOLEAN NOT NULL DEFAULT FALSE
+);

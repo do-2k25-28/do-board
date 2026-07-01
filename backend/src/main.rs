@@ -2,7 +2,9 @@ mod auth;
 mod db;
 mod fixtures;
 mod gtfs;
+mod pubsub;
 mod routes;
+mod screen_query;
 mod state;
 
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -46,13 +48,13 @@ async fn main() {
     }
 
     let state = AppState {
-        devices: Arc::new(std::sync::RwLock::new(HashMap::new())),
         device_senders: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        device_screens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         db,
         jwt_secret,
         gtfs: gtfs_store,
     };
+
+    pubsub::spawn_device_push_listener(state.clone());
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

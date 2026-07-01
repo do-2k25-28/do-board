@@ -14,7 +14,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "chrono", "uuid", "json", "migrate", "macros"] }
 bcrypt = "0.15"
 jsonwebtoken = "9"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "json", "gzip"] }
 rust_xlsxwriter = "0.82"

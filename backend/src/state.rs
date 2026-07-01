@@ -1,16 +1,18 @@
 use axum::extract::ws::Message;
-use shared::Device;
 use sqlx::PgPool;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
 use tokio::sync::{mpsc::UnboundedSender, Mutex, RwLock};
+use uuid::Uuid;
 
-pub type DeviceStore = Arc<std::sync::RwLock<HashMap<String, Device>>>;
-pub type DeviceSenders = Arc<Mutex<HashMap<String, UnboundedSender<Message>>>>;
-/// Maps device_id → screen_id currently displayed on that device.
-pub type DeviceScreens = Arc<Mutex<HashMap<String, String>>>;
+/// Live WebSocket senders for devices connected *to this replica*. Presence
+/// (online/last_seen/current_screen) is authoritative in Postgres (`devices`
+/// table) so it stays consistent across replicas - only the actual socket
+/// handle has to live in-process, per pod. See `crate::pubsub` for how a
+/// push request on one replica reaches a device connected to another.
+pub type DeviceSenders = Arc<Mutex<HashMap<Uuid, UnboundedSender<Message>>>>;
 /// GTFS static data cache (refreshed daily). Uses tokio RwLock so it is safe
 /// to hold across await points without making futures !Send.
 pub type GtfsStore = Arc<RwLock<Option<GtfsCache>>>;
@@ -44,9 +46,7 @@ pub struct GtfsCache {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub devices: DeviceStore,
     pub device_senders: DeviceSenders,
-    pub device_screens: DeviceScreens,
     pub db: PgPool,
     pub jwt_secret: String,
     pub gtfs: GtfsStore,

@@ -2,7 +2,7 @@ use crate::auth;
 use crate::components::{Button, ButtonVariant, Input, Label};
 use dioxus::prelude::*;
 use gloo_net::http::Request;
-use shared::{CreateUserRequest, User};
+use shared::{CreateUserRequest, SetPasswordRequest, User};
 
 const API_BASE: &str = match option_env!("API_BASE") {
     Some(v) => v,
@@ -176,23 +176,137 @@ pub fn Users() -> Element {
                             tr { class: "border-b bg-muted/40",
                                 th { class: "text-left px-4 py-3 font-medium text-muted-foreground", "Email" }
                                 th { class: "text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell", "Created" }
+                                th { class: "text-right px-4 py-3 font-medium text-muted-foreground", "Actions" }
                             }
                         }
                         tbody {
                             for user in users.read().iter() {
-                                tr { key: "{user.id}", class: "border-b last:border-0 hover:bg-muted/20 transition-colors",
-                                    td { class: "px-4 py-3 font-medium", "{user.email}" }
-                                    td { class: "px-4 py-3 text-muted-foreground hidden sm:table-cell", "{user.created_at}" }
-                                }
+                                UserRow { key: "{user.id}", user: user.clone() }
                             }
                             if users.read().is_empty() {
                                 tr {
-                                    td { class: "px-4 py-8 text-center text-muted-foreground", colspan: "2",
+                                    td { class: "px-4 py-8 text-center text-muted-foreground", colspan: "3",
                                         "No users found."
                                     }
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn UserRow(user: User) -> Element {
+    let mut show_form = use_signal(|| false);
+    let mut new_password = use_signal(String::new);
+    let mut confirm_password = use_signal(String::new);
+    let mut error = use_signal(|| None::<String>);
+    let mut success = use_signal(|| false);
+    let mut saving = use_signal(|| false);
+    let user_id = use_signal(|| user.id.clone());
+
+    let on_submit = move |e: Event<FormData>| {
+        e.prevent_default();
+        error.set(None);
+        success.set(false);
+
+        let new_pass = new_password();
+        let confirm = confirm_password();
+
+        if new_pass.is_empty() {
+            error.set(Some("Please enter a new password.".to_string()));
+            return;
+        }
+        if new_pass != confirm {
+            error.set(Some("Passwords do not match.".to_string()));
+            return;
+        }
+
+        spawn(async move {
+            saving.set(true);
+
+            let token = auth::get_token().unwrap_or_default();
+            let id = user_id.read().clone();
+
+            let body = match serde_json::to_string(&SetPasswordRequest {
+                new_password: new_pass,
+            }) {
+                Ok(b) => b,
+                Err(_) => {
+                    error.set(Some("Serialization error.".to_string()));
+                    saving.set(false);
+                    return;
+                }
+            };
+
+            match Request::put(&format!("{API_BASE}/api/users/{id}/password"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", &format!("Bearer {token}"))
+                .body(body)
+                .unwrap()
+                .send()
+                .await
+            {
+                Ok(resp) if resp.ok() => {
+                    new_password.set(String::new());
+                    confirm_password.set(String::new());
+                    success.set(true);
+                }
+                Ok(_) => error.set(Some("Failed to update password.".to_string())),
+                Err(_) => error.set(Some("Cannot reach server.".to_string())),
+            }
+
+            saving.set(false);
+        });
+    };
+
+    rsx! {
+        tr { class: "border-b last:border-0 hover:bg-muted/20 transition-colors",
+            td { class: "px-4 py-3 font-medium align-middle", "{user.email}" }
+            td { class: "px-4 py-3 text-muted-foreground hidden sm:table-cell align-middle", "{user.created_at}" }
+            td { class: "px-4 py-3 text-right align-top",
+                div { class: "flex flex-col items-end gap-2",
+                    Button {
+                        variant: ButtonVariant::Outline,
+                        onclick: move |_| {
+                            success.set(false);
+                            error.set(None);
+                            show_form.set(!show_form());
+                        },
+                        if show_form() { "Cancel" } else { "Change password" }
+                    }
+
+                    if show_form() {
+                        form {
+                            onsubmit: on_submit,
+                            class: "flex flex-col gap-2 items-end w-64",
+                            Input {
+                                input_type: "password",
+                                placeholder: "New password",
+                                value: new_password(),
+                                oninput: move |v| new_password.set(v),
+                            }
+                            Input {
+                                input_type: "password",
+                                placeholder: "Confirm new password",
+                                value: confirm_password(),
+                                oninput: move |v| confirm_password.set(v),
+                            }
+                            if let Some(err) = error() {
+                                p { class: "text-xs text-destructive", "{err}" }
+                            }
+                            Button {
+                                disabled: saving(),
+                                if saving() { "Saving…" } else { "Save password" }
+                            }
+                        }
+                    }
+
+                    if success() {
+                        p { class: "text-xs text-emerald-600", "Password updated." }
                     }
                 }
             }

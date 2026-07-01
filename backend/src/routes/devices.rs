@@ -1,5 +1,7 @@
 use crate::auth::AuthUser;
-use crate::state::{AppState, DeviceScreens, DeviceSenders, DeviceStore};
+use crate::pubsub;
+use crate::screen_query;
+use crate::state::{AppState, DeviceSenders};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -11,78 +13,65 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use shared::{Device, PushScreenRequest, SaveDeviceRequest};
-use sqlx::types::Json as SqlJson;
-use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
-    hash::{Hash, Hasher},
-    net::SocketAddr,
-};
+use std::net::SocketAddr;
 use tokio::sync::mpsc;
+use uuid::Uuid;
+
+// Fixed, arbitrary namespace so a device's UUID is deterministic (same
+// ip+user-agent always maps to the same id) without needing any client-side
+// storage or cookie.
+const DEVICE_NAMESPACE: Uuid = Uuid::from_u128(0x2e1a8b3a_0f0a_4e9b_9d0e_6a2c9f6b7a10);
+
+fn device_fingerprint(ip: &str, user_agent: &str) -> Uuid {
+    Uuid::new_v5(&DEVICE_NAMESPACE, format!("{ip}|{user_agent}").as_bytes())
+}
+
+fn parse_device_id(id: &str) -> Result<Uuid, (StatusCode, &'static str)> {
+    Uuid::parse_str(id).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid device ID"))
+}
 
 #[derive(sqlx::FromRow)]
-struct SavedDeviceRow {
-    id: String,
-    name: String,
+struct DeviceRow {
+    id: Uuid,
     ip: String,
     browser: String,
     os: String,
-    created_at: chrono::DateTime<chrono::Utc>,
+    online: bool,
+    connected_at: chrono::DateTime<chrono::Utc>,
+    last_seen: chrono::DateTime<chrono::Utc>,
+    name: Option<String>,
+    saved: bool,
 }
 
-#[derive(sqlx::FromRow)]
-struct ScreenRow {
-    id: uuid::Uuid,
-    name: String,
-    slides: SqlJson<Vec<shared::Slide>>,
-    is_default: bool,
+impl DeviceRow {
+    fn into_device(self) -> Device {
+        Device {
+            id: self.id.to_string(),
+            ip: self.ip,
+            browser: self.browser,
+            os: self.os,
+            online: self.online,
+            connected_at: self
+                .connected_at
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
+            last_seen: self.last_seen.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            name: self.name,
+            saved: self.saved,
+        }
+    }
 }
 
 pub async fn list_devices(State(state): State<AppState>) -> Json<Vec<Device>> {
-    let saved: Vec<SavedDeviceRow> =
-        sqlx::query_as("SELECT id, name, ip, browser, os, created_at FROM saved_devices")
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default();
+    let rows: Vec<DeviceRow> = sqlx::query_as(
+        "SELECT id, ip, browser, os, online, connected_at, last_seen, name, saved FROM devices",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
 
-    let saved_map: HashMap<String, SavedDeviceRow> =
-        saved.into_iter().map(|r| (r.id.clone(), r)).collect();
+    let mut list: Vec<Device> = rows.into_iter().map(DeviceRow::into_device).collect();
 
-    let mut result: HashMap<String, Device> = {
-        let store = state.devices.read().unwrap();
-        store
-            .iter()
-            .map(|(k, v)| {
-                let mut d = v.clone();
-                if let Some(row) = saved_map.get(k) {
-                    d.saved = true;
-                    d.name = Some(row.name.clone());
-                }
-                (k.clone(), d)
-            })
-            .collect()
-    };
-
-    for (id, row) in &saved_map {
-        if !result.contains_key(id) {
-            let ts = row.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
-            result.insert(
-                id.clone(),
-                Device {
-                    id: id.clone(),
-                    ip: row.ip.clone(),
-                    browser: row.browser.clone(),
-                    os: row.os.clone(),
-                    online: false,
-                    connected_at: ts.clone(),
-                    last_seen: ts,
-                    name: Some(row.name.clone()),
-                    saved: true,
-                },
-            );
-        }
-    }
-
-    let mut list: Vec<Device> = result.into_values().collect();
     list.sort_by(|a, b| {
         b.online
             .cmp(&a.online)
@@ -97,29 +86,18 @@ pub async fn save_device(
     Path(id): Path<String>,
     Json(req): Json<SaveDeviceRequest>,
 ) -> Result<StatusCode, (StatusCode, &'static str)> {
-    let (ip, browser, os) = {
-        let store = state.devices.read().unwrap();
-        if let Some(d) = store.get(&id) {
-            (d.ip.clone(), d.browser.clone(), d.os.clone())
-        } else {
-            (String::new(), String::new(), String::new())
-        }
-    };
+    let device_id = parse_device_id(&id)?;
 
-    sqlx::query(
-        "INSERT INTO saved_devices (id, name, ip, browser, os)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, ip = EXCLUDED.ip,
-             browser = EXCLUDED.browser, os = EXCLUDED.os",
-    )
-    .bind(&id)
-    .bind(&req.name)
-    .bind(&ip)
-    .bind(&browser)
-    .bind(&os)
-    .execute(&state.db)
-    .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+    let result = sqlx::query("UPDATE devices SET name = $1, saved = TRUE WHERE id = $2")
+        .bind(&req.name)
+        .bind(device_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Device not found"));
+    }
 
     Ok(StatusCode::OK)
 }
@@ -130,48 +108,39 @@ pub async fn push_screen(
     Path(device_id): Path<String>,
     Json(req): Json<PushScreenRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let uuid = uuid::Uuid::parse_str(&req.screen_id)
+    let device_id = parse_device_id(&device_id).map_err(|(s, m)| (s, m.to_string()))?;
+    let screen_uuid = Uuid::parse_str(&req.screen_id)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid screen ID".into()))?;
 
-    let row = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error".into()))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, "Screen not found".into()))?;
+    screen_query::fetch_screen(&state.db, screen_uuid)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error".into()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Screen not found".into()))?;
 
-    let screen = shared::Screen {
-        id: row.id.to_string(),
-        name: row.name,
-        slides: row.slides.0,
-        is_default: row.is_default,
-    };
+    let online: Option<bool> = sqlx::query_scalar("SELECT online FROM devices WHERE id = $1")
+        .bind(device_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error".into()))?;
 
-    let msg = serde_json::json!({ "type": "set_screen", "screen": screen });
-    let msg_text = serde_json::to_string(&msg).unwrap();
-
-    let senders = state.device_senders.lock().await;
-    match senders.get(&device_id) {
-        Some(tx) => {
-            tx.send(Message::Text(msg_text.into())).map_err(|_| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Device disconnected".into(),
-                )
-            })?;
-            drop(senders);
-            // Track which screen this device is now showing
-            state
-                .device_screens
-                .lock()
-                .await
-                .insert(device_id, req.screen_id);
-            Ok(StatusCode::OK)
-        }
-        None => Err((StatusCode::NOT_FOUND, "Device not connected".into())),
+    if online != Some(true) {
+        return Err((StatusCode::NOT_FOUND, "Device not connected".into()));
     }
+
+    sqlx::query("UPDATE devices SET current_screen_id = $1 WHERE id = $2")
+        .bind(screen_uuid)
+        .bind(device_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error".into()))?;
+
+    // Fan out to every replica - whichever one actually holds this device's
+    // WebSocket connection will deliver it. See crate::pubsub.
+    pubsub::notify_device_push(&state.db, device_id, screen_uuid)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error".into()))?;
+
+    Ok(StatusCode::OK)
 }
 
 pub async fn ws_handler(
@@ -188,92 +157,55 @@ pub async fn ws_handler(
 
     let ip = addr.ip().to_string();
     let fingerprint = device_fingerprint(&ip, &user_agent);
-    let now = now_str();
+    let browser = parse_browser(&user_agent);
+    let os = parse_os(&user_agent);
 
-    {
-        let mut store = state.devices.write().unwrap();
-        if let Some(existing) = store.get_mut(&fingerprint) {
-            existing.online = true;
-            existing.last_seen = now;
-        } else {
-            store.insert(
-                fingerprint.clone(),
-                Device {
-                    id: fingerprint.clone(),
-                    ip,
-                    browser: parse_browser(&user_agent),
-                    os: parse_os(&user_agent),
-                    online: true,
-                    connected_at: now.clone(),
-                    last_seen: now,
-                    name: None,
-                    saved: false,
-                },
-            );
-        }
-    }
+    // Devices always reset to the current default screen on (re)connect.
+    let default_screen = screen_query::fetch_default_screen(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let default_screen_uuid = default_screen
+        .as_ref()
+        .and_then(|s| Uuid::parse_str(&s.id).ok());
 
-    // Send default screen if one is set
-    let default = get_default_screen_msg(&state).await;
-    let (default_msg, default_screen_id) = match default {
-        Some((msg, sid)) => (Some(msg), Some(sid)),
-        None => (None, None),
-    };
+    let _ = sqlx::query(
+        "INSERT INTO devices (id, ip, browser, os, online, connected_at, last_seen, current_screen_id)
+         VALUES ($1, $2, $3, $4, TRUE, NOW(), NOW(), $5)
+         ON CONFLICT (id) DO UPDATE SET
+             ip = EXCLUDED.ip, browser = EXCLUDED.browser, os = EXCLUDED.os,
+             online = TRUE, last_seen = NOW(), current_screen_id = EXCLUDED.current_screen_id",
+    )
+    .bind(fingerprint)
+    .bind(&ip)
+    .bind(&browser)
+    .bind(&os)
+    .bind(default_screen_uuid)
+    .execute(&state.db)
+    .await;
+
+    let initial_msg = default_screen
+        .as_ref()
+        .map(screen_query::set_screen_message);
+    let db = state.db.clone();
 
     ws.on_upgrade(move |socket| {
-        handle_socket(
-            socket,
-            state.devices,
-            state.device_senders,
-            state.device_screens,
-            fingerprint,
-            default_msg,
-            default_screen_id,
-        )
+        handle_socket(socket, db, state.device_senders, fingerprint, initial_msg)
     })
-}
-
-/// Returns (json_message, screen_id) for the current default screen.
-async fn get_default_screen_msg(state: &AppState) -> Option<(String, String)> {
-    let row = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens WHERE is_default = TRUE LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()??;
-
-    let screen_id = row.id.to_string();
-    let screen = shared::Screen {
-        id: screen_id.clone(),
-        name: row.name,
-        slides: row.slides.0,
-        is_default: row.is_default,
-    };
-    let msg = serde_json::json!({ "type": "set_screen", "screen": screen });
-    Some((serde_json::to_string(&msg).ok()?, screen_id))
 }
 
 async fn handle_socket(
     socket: WebSocket,
-    devices: DeviceStore,
+    db: sqlx::PgPool,
     device_senders: DeviceSenders,
-    device_screens: DeviceScreens,
-    fingerprint: String,
+    fingerprint: Uuid,
     initial_msg: Option<String>,
-    initial_screen_id: Option<String>,
 ) {
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
     {
         let mut senders = device_senders.lock().await;
-        senders.insert(fingerprint.clone(), tx.clone());
-    }
-
-    if let Some(screen_id) = initial_screen_id {
-        device_screens
-            .lock()
-            .await
-            .insert(fingerprint.clone(), screen_id);
+        senders.insert(fingerprint, tx.clone());
     }
 
     // Send default screen immediately on connect
@@ -299,11 +231,10 @@ async fn handle_socket(
                 if matches!(msg, Message::Close(_)) {
                     break;
                 }
-                if let Ok(mut store) = devices.write() {
-                    if let Some(device) = store.get_mut(&fingerprint) {
-                        device.last_seen = now_str();
-                    }
-                }
+                let _ = sqlx::query("UPDATE devices SET last_seen = NOW() WHERE id = $1")
+                    .bind(fingerprint)
+                    .execute(&db)
+                    .await;
             }
             Err(_) => break,
         }
@@ -315,26 +246,11 @@ async fn handle_socket(
         let mut senders = device_senders.lock().await;
         senders.remove(&fingerprint);
     }
-    device_screens.lock().await.remove(&fingerprint);
-    if let Ok(mut store) = devices.write() {
-        if let Some(device) = store.get_mut(&fingerprint) {
-            device.online = false;
-            device.last_seen = now_str();
-        }
-    }
-}
 
-fn device_fingerprint(ip: &str, user_agent: &str) -> String {
-    let mut h = DefaultHasher::new();
-    ip.hash(&mut h);
-    user_agent.hash(&mut h);
-    format!("{:x}", h.finish())
-}
-
-fn now_str() -> String {
-    chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string()
+    let _ = sqlx::query("UPDATE devices SET online = FALSE, last_seen = NOW() WHERE id = $1")
+        .bind(fingerprint)
+        .execute(&db)
+        .await;
 }
 
 fn parse_browser(ua: &str) -> String {
