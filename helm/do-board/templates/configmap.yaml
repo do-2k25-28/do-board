@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "do-board.fullname" . }}-config
+  labels:
+    {{- include "do-board.labels" . | nindent 4 }}
+data:
+  GTFS_STATIC_URL: {{ .Values.config.gtfsStaticUrl | quote }}
+  GTFS_RT_URL: {{ .Values.config.gtfsRtUrl | quote }}

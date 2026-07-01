@@ -11,3 +11,7 @@
 
 # Env
 .env
+
+# Helm
+/helm/do-board/charts/
+/helm/do-board/*.tgz

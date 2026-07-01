@@ -22,7 +22,8 @@ Rust workspace with two crates and a shared types library:
 do-board/
 ├── backend/    # REST API (Axum, port 3000)
 ├── frontend/   # SPA compiled to WebAssembly (Dioxus)
-└── shared/     # Types shared between backend and frontend
+├── shared/     # Types shared between backend and frontend
+└── helm/       # Kubernetes Helm chart
 ```
 
 | Crate      | Role                              | Technology     |
@@ -93,6 +94,80 @@ cp .env.example .env
 | `JWT_SECRET`     | `change_me_in_production`    | Secret used to sign JWT tokens - **change this in production** |
 
 The initial admin account is created automatically on first start if it does not already exist.
+
+---
+
+### Kubernetes (Helm)
+
+A Helm chart is provided in [`helm/do-board`](helm/do-board) to deploy do-board on a Kubernetes cluster. It deploys:
+
+- a `backend` Deployment + Service (Axum API)
+- a `frontend` Deployment + Service (nginx serving the WASM bundle, reverse-proxying `/api` and `/ws` to the backend)
+- an optional `Ingress` exposing the frontend
+- a bundled [PostgreSQL](https://github.com/bitnami/charts/tree/main/bitnami/postgresql) instance (can be disabled in favour of an external/managed database)
+
+#### Images
+
+Container images are built and pushed to the GitHub Container Registry by [`.github/workflows/docker.yml`](.github/workflows/docker.yml):
+
+| Trigger                  | Tags pushed                                  |
+|---------------------------|-----------------------------------------------|
+| Push to `main`            | `latest`, `sha-<short-sha>`                   |
+| GitHub Release (`vX.Y.Z`) | `X.Y.Z`, `X.Y`, `X`                            |
+
+Images: `ghcr.io/do-2k25-28/do-board-backend` and `ghcr.io/do-2k25-28/do-board-frontend`. If the packages are private, create an `imagePullSecrets` entry (see below) before installing the chart.
+
+#### Prerequisites
+
+- A Kubernetes cluster and [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) configured to reach it
+- [Helm](https://helm.sh/docs/intro/install/) ≥ 3.8
+- An ingress controller (e.g. [Traefik](https://doc.traefik.io/traefik/providers/kubernetes-ingress/)) if you want to enable the bundled `Ingress`
+
+#### Install
+
+```sh
+cd helm/do-board
+
+# Fetch the bundled PostgreSQL chart dependency
+helm dependency update
+
+helm install do-board . \
+  --namespace do-board --create-namespace \
+  --set env.jwtSecret="$(openssl rand -hex 32)" \
+  --set env.adminEmail=admin@example.com \
+  --set env.adminPassword="$(openssl rand -hex 16)" \
+  --set ingress.enabled=true \
+  --set ingress.className=traefik \
+  --set ingress.host=do-board.example.com
+```
+
+Without `ingress.enabled`, reach the app with:
+
+```sh
+kubectl port-forward -n do-board svc/do-board-frontend 8080:80
+```
+
+#### Key values
+
+| Value                       | Default                                       | Description                                              |
+|------------------------------|------------------------------------------------|------------------------------------------------------------|
+| `backend.image.repository`   | `ghcr.io/do-2k25-28/do-board-backend`         | Backend image                                             |
+| `frontend.image.repository`  | `ghcr.io/do-2k25-28/do-board-frontend`        | Frontend image                                             |
+| `backend.image.tag` / `frontend.image.tag` | `""` (→ `.Chart.AppVersion`, i.e. `latest`) | Override to pin a release tag, e.g. `1.2.0` or `sha-abcdef0` |
+| `imagePullSecrets`           | `[]`                                            | Names of secrets to pull private GHCR images               |
+| `env.jwtSecret` / `env.adminEmail` / `env.adminPassword` | see `values.yaml` | App credentials - **override in production**, or set `existingSecret` to a Secret you manage yourself |
+| `config.gtfsStaticUrl` / `config.gtfsRtUrl` | Montpellier TaM GTFS feeds | Public transport widget data source |
+| `postgresql.enabled`         | `true`                                          | Set to `false` to use an external database via `externalDatabase.url` |
+| `ingress.enabled`             | `false`                                         | Expose the frontend through an Ingress                    |
+
+See [`helm/do-board/values.yaml`](helm/do-board/values.yaml) for the full list, and run `helm show values helm/do-board` or `helm template helm/do-board` to inspect the rendered manifests before installing.
+
+#### Upgrade / uninstall
+
+```sh
+helm upgrade do-board helm/do-board -n do-board -f my-values.yaml
+helm uninstall do-board -n do-board
+```
 
 ---
 

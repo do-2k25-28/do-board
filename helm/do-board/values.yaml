@@ -1,0 +1,83 @@
+# Default values for the do-board chart.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Image pull secret names, needed if the GHCR packages are private.
+imagePullSecrets: []
+# - name: ghcr-credentials
+
+backend:
+  image:
+    repository: ghcr.io/do-2k25-28/do-board-backend
+    tag: "" # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  port: 3000
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+frontend:
+  image:
+    repository: ghcr.io/do-2k25-28/do-board-frontend
+    tag: "" # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: do-board.example.com
+  tls:
+    enabled: false
+    secretName: ""
+
+# Application secrets. Either set the values below (a Secret is created for
+# you) or set existingSecret to the name of a Secret you manage yourself,
+# containing the keys JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD and -
+# only if postgresql.enabled is false - DATABASE_URL.
+existingSecret: ""
+env:
+  jwtSecret: "change_me_in_production"
+  adminEmail: "admin@example.com"
+  adminPassword: "changeme"
+
+# Non-sensitive backend configuration.
+config:
+  gtfsStaticUrl: "https://data.montpellier3m.fr/GTFS/Urbain/GTFS.zip"
+  gtfsRtUrl: "https://data.montpellier3m.fr/GTFS/Urbain/TripUpdate.pb"
+
+# Bundled PostgreSQL (Bitnami chart). Disable and set externalDatabase.url
+# to point at a managed/external instance instead.
+postgresql:
+  enabled: true
+  auth:
+    username: doboard
+    password: doboard_secret
+    database: doboard
+  primary:
+    persistence:
+      size: 4Gi
+
+# Used only when postgresql.enabled is false.
+externalDatabase:
+  url: ""

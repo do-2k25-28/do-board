@@ -15,5 +15,7 @@ RUN dx build --release
 
 FROM nginx:alpine
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV BACKEND_HOST=backend
+ENV BACKEND_PORT=3000
 EXPOSE 80
