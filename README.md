@@ -41,7 +41,6 @@ do-board/
 | `birthdays` | Promotion birthdays                  |
 | `iframe`    | Embedded external URL (Grafana, …)   |
 | `clock`     | Current time and date                |
-| `planning`  | Weekly schedule                      |
 
 ## Running
 

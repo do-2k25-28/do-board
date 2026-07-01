@@ -112,6 +112,29 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
+/// Extract the video ID from a YouTube watch/share/embed/shorts URL, or treat
+/// the input as a bare video ID if it doesn't look like a URL.
+fn youtube_video_id(input: &str) -> Option<String> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let extract_after = |marker: &str| -> Option<String> {
+        let idx = s.find(marker)? + marker.len();
+        let rest = &s[idx..];
+        let end = rest
+            .find(|c: char| c == '&' || c == '?' || c == '#')
+            .unwrap_or(rest.len());
+        let id = &rest[..end];
+        (!id.is_empty()).then(|| id.to_string())
+    };
+    extract_after("v=")
+        .or_else(|| extract_after("youtu.be/"))
+        .or_else(|| extract_after("/embed/"))
+        .or_else(|| extract_after("/shorts/"))
+        .or_else(|| (!s.contains('/') && !s.contains('.')).then(|| s.to_string()))
+}
+
 /// Convert `https://host/path` → `https/host/path` (trailing slash if no path).
 fn url_to_proxy_path(url: &str) -> String {
     let (scheme, rest) = if let Some(stripped) = url.strip_prefix("https://") {
@@ -577,8 +600,15 @@ pub fn Screen() -> Element {
                     url,
                     cookies,
                     local_storage,
+                    scroll_y_percent,
                 } => {
-                    let src = if local_storage.is_empty() && cookies.is_empty() {
+                    // Scrolling requires injecting a script into the document, which
+                    // only works when the page is served from our own origin — so a
+                    // non-zero scroll forces the proxy path even with no cookies/LS.
+                    let src = if local_storage.is_empty()
+                        && cookies.is_empty()
+                        && *scroll_y_percent == 0
+                    {
                         url.clone()
                     } else {
                         let ls_map: HashMap<&str, &str> = local_storage
@@ -595,9 +625,10 @@ pub fn Screen() -> Element {
                         // Assets load from the same proxy path → same origin → no CORS/module issues
                         let proxy_path = url_to_proxy_path(url);
                         format!(
-                            "{API_BASE}/api/iframe-proxy/{proxy_path}?ls={}&cookies={}",
+                            "{API_BASE}/api/iframe-proxy/{proxy_path}?ls={}&cookies={}&scroll_y={}",
                             percent_encode(&ls_json),
                             percent_encode(&cookies_json),
+                            scroll_y_percent,
                         )
                     };
                     rsx! {
@@ -686,6 +717,33 @@ pub fn Screen() -> Element {
                         }
                     }
                 }
+                SlideConfig::Image { url } => {
+                    let src = format!("{API_BASE}{url}");
+                    rsx! {
+                        div { class: "flex items-center justify-center h-full w-full",
+                            img { src: "{src}", class: "max-w-full max-h-full object-contain" }
+                        }
+                    }
+                }
+                SlideConfig::Video { url } => match youtube_video_id(url) {
+                    Some(id) => {
+                        let src = format!(
+                            "https://www.youtube-nocookie.com/embed/{id}?autoplay=1&mute=1&loop=1&playlist={id}&controls=0&modestbranding=1&rel=0&iv_load_policy=3",
+                        );
+                        rsx! {
+                            iframe {
+                                src: "{src}",
+                                class: "w-full h-full border-0",
+                                "allow": "autoplay; encrypted-media",
+                            }
+                        }
+                    }
+                    None => rsx! {
+                        div { class: "flex items-center justify-center h-full",
+                            p { class: "text-white/30 text-lg", "Invalid YouTube URL" }
+                        }
+                    },
+                },
             },
         }
     };

@@ -18,6 +18,8 @@ fn slide_type_label(config: &SlideConfig) -> &'static str {
         SlideConfig::Birthdays { .. } => "Birthdays",
         SlideConfig::Iframe { .. } => "iFrame",
         SlideConfig::Clock { .. } => "Clock",
+        SlideConfig::Image { .. } => "Image",
+        SlideConfig::Video { .. } => "Video",
     }
 }
 
@@ -28,6 +30,8 @@ fn slide_type_icon(config: &SlideConfig) -> &'static str {
         SlideConfig::Birthdays { .. } => "cake",
         SlideConfig::Iframe { .. } => "globe",
         SlideConfig::Clock { .. } => "clock",
+        SlideConfig::Image { .. } => "image",
+        SlideConfig::Video { .. } => "video",
     }
 }
 

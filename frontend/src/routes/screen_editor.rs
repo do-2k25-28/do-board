@@ -29,6 +29,11 @@ struct StopSearchResult {
     lines: Vec<StopLineResult>,
 }
 
+#[derive(Clone, serde::Deserialize)]
+struct MediaUploadResponse {
+    url: String,
+}
+
 fn get_grouped_timezones() -> Vec<(String, Vec<String>)> {
     let flat: Vec<String> =
         js_sys::eval("try{Array.from(Intl.supportedValuesOf('timeZone'))}catch(e){null}")
@@ -75,7 +80,10 @@ fn new_slide(slide_type: &str) -> Slide {
             url: String::new(),
             cookies: vec![],
             local_storage: vec![],
+            scroll_y_percent: 0,
         },
+        "image" => SlideConfig::Image { url: String::new() },
+        "video" => SlideConfig::Video { url: String::new() },
         _ => SlideConfig::Clock {
             clocks: vec![ClockConfig {
                 timezone: "Europe/Paris".into(),
@@ -124,6 +132,8 @@ fn slide_label(config: &SlideConfig) -> &'static str {
         SlideConfig::Birthdays { .. } => "Birthdays",
         SlideConfig::Iframe { .. } => "iFrame",
         SlideConfig::Clock { .. } => "Clock",
+        SlideConfig::Image { .. } => "Image",
+        SlideConfig::Video { .. } => "Video",
     }
 }
 
@@ -134,6 +144,8 @@ fn slide_icon(config: &SlideConfig) -> &'static str {
         SlideConfig::Birthdays { .. } => "cake",
         SlideConfig::Iframe { .. } => "globe",
         SlideConfig::Clock { .. } => "clock",
+        SlideConfig::Image { .. } => "image",
+        SlideConfig::Video { .. } => "video",
     }
 }
 
@@ -289,6 +301,8 @@ pub fn ScreenEditor(id: String) -> Element {
                                 ("birthdays", "Birthdays", "cake"),
                                 ("iframe",    "iFrame",    "globe"),
                                 ("clock",     "Clock",     "clock"),
+                                ("image",     "Image",     "image"),
+                                ("video",     "Video",     "video"),
                             ] {
                                 button {
                                     class: if adding_type().as_deref() == Some(key) {
@@ -358,6 +372,8 @@ fn SlideRow(
             })
             .collect::<Vec<String>>()
             .join(", "),
+        SlideConfig::Image { url } => url.chars().take(30).collect::<String>(),
+        SlideConfig::Video { url } => url.chars().take(30).collect::<String>(),
     };
 
     rsx! {
@@ -435,6 +451,8 @@ fn SlideDescription(config: SlideConfig) -> Element {
             })
             .collect::<Vec<String>>()
             .join(", "),
+        SlideConfig::Image { url } => url.chars().take(30).collect::<String>(),
+        SlideConfig::Video { url } => url.chars().take(30).collect::<String>(),
     };
     rsx! {
         span { class: "text-xs text-muted-foreground truncate max-w-32", "{text}" }
@@ -451,6 +469,8 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
         SlideConfig::Birthdays { .. } => "birthdays",
         SlideConfig::Iframe { .. } => "iframe",
         SlideConfig::Clock { .. } => "clock",
+        SlideConfig::Image { .. } => "image",
+        SlideConfig::Video { .. } => "video",
     };
     let slide_id = slide.id.clone();
     let mut duration = use_signal(|| slide.duration_secs);
@@ -506,23 +526,48 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
     let mut bday_import_status = use_signal(|| Option::<String>::None);
 
     // iFrame
-    let (i_url, i_cookies, i_local_storage) = if let SlideConfig::Iframe {
+    let (i_url, i_cookies, i_local_storage, i_scroll_y) = if let SlideConfig::Iframe {
         url,
         cookies,
         local_storage,
+        scroll_y_percent,
     } = &slide.config
     {
-        (url.clone(), cookies.clone(), local_storage.clone())
+        (
+            url.clone(),
+            cookies.clone(),
+            local_storage.clone(),
+            *scroll_y_percent,
+        )
     } else {
-        (String::new(), vec![], vec![])
+        (String::new(), vec![], vec![], 0)
     };
     let mut iframe_url = use_signal(move || i_url);
     let mut iframe_cookies: Signal<Vec<KvEntry>> = use_signal(move || i_cookies);
     let mut iframe_local_storage: Signal<Vec<KvEntry>> = use_signal(move || i_local_storage);
+    let mut iframe_scroll_y: Signal<u8> = use_signal(move || i_scroll_y);
     let mut iframe_new_cookie_key = use_signal(String::new);
     let mut iframe_new_cookie_val = use_signal(String::new);
     let mut iframe_new_ls_key = use_signal(String::new);
     let mut iframe_new_ls_val = use_signal(String::new);
+
+    // Image
+    let img_url = if let SlideConfig::Image { url } = &slide.config {
+        url.clone()
+    } else {
+        String::new()
+    };
+    let mut image_url = use_signal(move || img_url);
+    let mut image_uploading = use_signal(|| false);
+    let mut image_upload_error: Signal<Option<String>> = use_signal(|| None);
+
+    // Video
+    let vid_url = if let SlideConfig::Video { url } = &slide.config {
+        url.clone()
+    } else {
+        String::new()
+    };
+    let mut video_url = use_signal(move || vid_url);
 
     // Clock
     let c_init = if let SlideConfig::Clock { clocks } = &slide.config {
@@ -580,7 +625,10 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                 url: iframe_url(),
                 cookies: iframe_cookies(),
                 local_storage: iframe_local_storage(),
+                scroll_y_percent: iframe_scroll_y(),
             },
+            "image" => SlideConfig::Image { url: image_url() },
+            "video" => SlideConfig::Video { url: video_url() },
             _ => SlideConfig::Clock { clocks: clocks() },
         };
         on_save.call(Slide {
@@ -1088,6 +1136,25 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                         }
                     }
 
+                    // Scroll position
+                    div { class: "flex flex-col gap-2",
+                        Label { html_for: "iscroll", "Scroll position ({iframe_scroll_y()}%)" }
+                        input {
+                            id: "iscroll",
+                            r#type: "range",
+                            min: "0",
+                            max: "100",
+                            value: "{iframe_scroll_y()}",
+                            class: "w-full",
+                            oninput: move |e| {
+                                if let Ok(v) = e.value().parse::<u8>() { iframe_scroll_y.set(v); }
+                            },
+                        }
+                        p { class: "text-xs text-muted-foreground",
+                            "0% = top of page, 50% = middle, 100% = bottom. Requires the page to load through the proxy."
+                        }
+                    }
+
                     // Cookies
                     div { class: "flex flex-col gap-2",
                         p { class: "text-sm font-medium", "Cookies" }
@@ -1192,6 +1259,92 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                                 "Add"
                             }
                         }
+                    }
+                }
+            }
+
+            // Type-specific - Image
+            if type_key == "image" {
+                div { class: "flex flex-col gap-3",
+                    if !image_url().is_empty() {
+                        div { class: "rounded-lg border overflow-hidden bg-muted flex items-center justify-center h-40",
+                            img {
+                                src: "{API_BASE}{image_url()}",
+                                class: "max-w-full max-h-40 object-contain",
+                            }
+                        }
+                    }
+                    div { class: "flex items-center gap-3",
+                        label {
+                            class: "cursor-pointer inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md px-3 h-9 hover:bg-accent transition-colors",
+                            Icon { name: "upload", size: "14" }
+                            if image_uploading() { "Uploading…" } else { "Upload image" }
+                            input {
+                                r#type: "file",
+                                accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml",
+                                class: "hidden",
+                                disabled: image_uploading(),
+                                onchange: move |evt: Event<FormData>| async move {
+                                    let files = evt.files();
+                                    let Some(file) = files.first() else { return; };
+                                    let content_type = file.content_type().unwrap_or_default();
+                                    image_upload_error.set(None);
+                                    image_uploading.set(true);
+                                    let Ok(bytes) = file.read_bytes().await else {
+                                        image_uploading.set(false);
+                                        image_upload_error.set(Some("Failed to read file".to_string()));
+                                        return;
+                                    };
+                                    let arr = js_sys::Uint8Array::from(bytes.as_ref());
+                                    let body = wasm_bindgen::JsValue::from(arr);
+                                    let result = Request::post(&format!("{API_BASE}/api/media"))
+                                        .header("content-type", &content_type)
+                                        .credentials(RequestCredentials::Include)
+                                        .body(body)
+                                        .unwrap()
+                                        .send()
+                                        .await;
+                                    match result {
+                                        Ok(resp) if resp.ok() => {
+                                            if let Ok(parsed) = resp.json::<MediaUploadResponse>().await {
+                                                image_url.set(parsed.url);
+                                            } else {
+                                                image_upload_error.set(Some("Parse error".to_string()));
+                                            }
+                                        }
+                                        _ => image_upload_error.set(Some("Upload failed".to_string())),
+                                    }
+                                    image_uploading.set(false);
+                                },
+                            }
+                        }
+                        if !image_url().is_empty() {
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                onclick: move |_| image_url.set(String::new()),
+                                "Remove"
+                            }
+                        }
+                        if let Some(err) = image_upload_error() {
+                            span { class: "text-xs text-destructive", "{err}" }
+                        }
+                    }
+                    p { class: "text-xs text-muted-foreground", "PNG, JPEG, GIF, WEBP or SVG · max 15MB" }
+                }
+            }
+
+            // Type-specific - Video
+            if type_key == "video" {
+                div { class: "flex flex-col gap-2",
+                    Label { html_for: "vurl", "YouTube URL" }
+                    Input {
+                        id: "vurl",
+                        placeholder: "https://www.youtube.com/watch?v=...",
+                        value: video_url(),
+                        oninput: move |v| video_url.set(v),
+                    }
+                    p { class: "text-xs text-muted-foreground",
+                        "Paste a YouTube video, share, or embed link. It will loop and play muted on the screen."
                     }
                 }
             }
