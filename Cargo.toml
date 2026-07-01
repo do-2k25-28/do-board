@@ -6,6 +6,9 @@ members = [
 ]
 resolver = "2"
 
+[profile.release]
+strip = "debuginfo"
+
 [workspace.metadata]
 app_name = "do-board"
 
