@@ -6,6 +6,7 @@ mod not_found;
 mod screen;
 mod screen_editor;
 mod screens;
+mod settings;
 mod users;
 
 pub use home::Home;
@@ -14,6 +15,7 @@ pub use not_found::NotFound;
 pub use screen::Screen;
 pub use screen_editor::ScreenEditor;
 pub use screens::Screens;
+pub use settings::Settings;
 pub use users::Users;
 
 use crate::layouts::auth_guard::AuthGuard;
@@ -35,6 +37,8 @@ pub enum Route {
     ScreenEditor { id: String },
     #[route("/users")]
     Users {},
+    #[route("/settings")]
+    Settings {},
     #[end_layout]
     #[end_layout]
     #[route("/:..route")]

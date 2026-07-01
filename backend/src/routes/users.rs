@@ -1,8 +1,9 @@
 use crate::auth::{AuthUser, UserRow};
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
-use bcrypt::{hash, DEFAULT_COST};
-use shared::{CreateUserRequest, User};
+use bcrypt::{hash, verify, DEFAULT_COST};
+use shared::{ChangePasswordRequest, CreateUserRequest, User};
+use uuid::Uuid;
 
 pub async fn list_users(
     _auth: AuthUser,
@@ -50,4 +51,40 @@ pub async fn create_user(
         email: row.email,
         created_at: row.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
     }))
+}
+
+pub async fn change_password(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<StatusCode, (StatusCode, &'static str)> {
+    let user_id =
+        Uuid::parse_str(&auth.id).map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token"))?;
+
+    let row = sqlx::query_as::<_, UserRow>(
+        "SELECT id, email, password_hash, created_at FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?
+    .ok_or((StatusCode::UNAUTHORIZED, "Invalid token"))?;
+
+    if !verify(&req.current_password, &row.password_hash)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Verification error"))?
+    {
+        return Err((StatusCode::UNAUTHORIZED, "Current password is incorrect"));
+    }
+
+    let new_hash = hash(&req.new_password, DEFAULT_COST)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Hash error"))?;
+
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(new_hash)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }

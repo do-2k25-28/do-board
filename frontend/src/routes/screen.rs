@@ -133,11 +133,23 @@ const API_BASE: &str = match option_env!("API_BASE") {
     None => "",
 };
 
-// Separate constant so it can be overridden independently of the HTTP API base
-const WS_URL: &str = match option_env!("WS_URL") {
-    Some(v) => v,
-    None => "ws://localhost:3000/ws",
-};
+// Can be overridden independently of the HTTP API base at build time. When
+// unset, derive a same-origin URL at runtime so the page's own reverse proxy
+// (nginx forwarding /ws to the backend) is used instead of a hardcoded host.
+fn ws_url() -> String {
+    if let Some(v) = option_env!("WS_URL") {
+        return v.to_string();
+    }
+
+    let location = web_sys::window().expect("no window").location();
+    let scheme = if location.protocol().unwrap_or_default() == "https:" {
+        "wss:"
+    } else {
+        "ws:"
+    };
+    let host = location.host().unwrap_or_default();
+    format!("{scheme}//{host}/ws")
+}
 
 // animation-fill-mode:backwards ensures the `from` keyframe is applied immediately
 // on insertion, preventing a one-frame flash at the natural (untransformed) position.
@@ -347,7 +359,7 @@ pub fn Screen() -> Element {
 
     // Hold the WebSocket alive for the lifetime of the component
     let ws: Signal<Option<web_sys::WebSocket>> =
-        use_signal(|| web_sys::WebSocket::new(WS_URL).ok());
+        use_signal(|| web_sys::WebSocket::new(&ws_url()).ok());
 
     // Fetch default screen on mount
     use_effect(move || {
