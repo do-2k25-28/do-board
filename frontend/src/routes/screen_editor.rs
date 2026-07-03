@@ -3,8 +3,8 @@ use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
 use shared::{
-    BirthdayEntry, ClockConfig, ClockStyle, KvEntry, Screen, Slide, SlideConfig, SlideTransition,
-    TransportProvider, UpdateScreenRequest,
+    BirthdayEntry, ClockConfig, ClockStyle, KvEntry, Screen, ScreenFont, ScreenTheme, Slide,
+    SlideConfig, SlideTransition, TransportProvider, UpdateScreenRequest,
 };
 use uuid::Uuid;
 use web_sys::RequestCredentials;
@@ -125,6 +125,24 @@ fn label_to_transition(s: &str) -> SlideTransition {
     }
 }
 
+fn font_key(f: &ScreenFont) -> &'static str {
+    match f {
+        ScreenFont::Sans => "sans",
+        ScreenFont::Serif => "serif",
+        ScreenFont::Mono => "mono",
+        ScreenFont::Display => "display",
+    }
+}
+
+fn key_to_font(s: &str) -> ScreenFont {
+    match s {
+        "serif" => ScreenFont::Serif,
+        "mono" => ScreenFont::Mono,
+        "display" => ScreenFont::Display,
+        _ => ScreenFont::Sans,
+    }
+}
+
 fn slide_label(config: &SlideConfig) -> &'static str {
     match config {
         SlideConfig::Weather { .. } => "Weather",
@@ -153,6 +171,7 @@ fn slide_icon(config: &SlideConfig) -> &'static str {
 pub fn ScreenEditor(id: String) -> Element {
     let mut screen_name = use_signal(String::new);
     let mut slides: Signal<Vec<Slide>> = use_signal(Vec::new);
+    let mut theme: Signal<ScreenTheme> = use_signal(ScreenTheme::default);
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
     let mut save_error = use_signal(|| None::<String>);
@@ -172,6 +191,7 @@ pub fn ScreenEditor(id: String) -> Element {
                 if let Ok(screen) = resp.json::<Screen>().await {
                     screen_name.set(screen.name);
                     slides.set(screen.slides);
+                    theme.set(screen.theme);
                 }
             }
             loading.set(false);
@@ -188,6 +208,7 @@ pub fn ScreenEditor(id: String) -> Element {
                 .json(&UpdateScreenRequest {
                     name: screen_name(),
                     slides: slides.read().clone(),
+                    theme: theme.read().clone(),
                 })
                 .unwrap()
                 .send()
@@ -236,6 +257,8 @@ pub fn ScreenEditor(id: String) -> Element {
                         oninput: move |v| screen_name.set(v),
                     }
                 }
+
+                AppearanceEditor { theme }
 
                 // Slides list
                 h2 { class: "font-semibold mb-3", "Slides ({slides.read().len()})" }
@@ -325,6 +348,218 @@ pub fn ScreenEditor(id: String) -> Element {
                                 },
                                 on_cancel: move |_| adding_type.set(None),
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Appearance ───────────────────────────────────────────────────────────────
+
+fn toggle_class(active: bool) -> &'static str {
+    if active {
+        "text-xs px-2.5 py-1 rounded-md border-2 border-ring bg-accent font-medium transition-colors"
+    } else {
+        "text-xs px-2.5 py-1 rounded-md border border-border hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+    }
+}
+
+#[component]
+fn AppearanceEditor(mut theme: Signal<ScreenTheme>) -> Element {
+    let mut bg_uploading = use_signal(|| false);
+    let mut bg_upload_error: Signal<Option<String>> = use_signal(|| None);
+
+    // Tracked separately from the theme data itself: switching to "Image"
+    // mode before a file is uploaded has nothing to derive from (no
+    // background_image_url yet), so the chosen mode must be its own signal.
+    let mut bg_mode: Signal<&'static str> = use_signal(|| {
+        if theme.read().background_image_url.is_some() {
+            "image"
+        } else if theme.read().background_color.is_some() {
+            "color"
+        } else {
+            "default"
+        }
+    });
+    let bg_color = theme
+        .read()
+        .background_color
+        .clone()
+        .unwrap_or_else(|| "#0a0a0a".to_string());
+    let bg_image_url = theme.read().background_image_url.clone();
+
+    let text_custom = theme.read().text_color.is_some();
+    let text_color = theme
+        .read()
+        .text_color
+        .clone()
+        .unwrap_or_else(|| "#ffffff".to_string());
+
+    let font = theme.read().font;
+
+    rsx! {
+        div { class: "flex flex-col gap-4 mb-6 rounded-xl border bg-card p-4",
+            p { class: "text-sm font-semibold", "Appearance" }
+
+            // Background
+            div { class: "flex flex-col gap-2",
+                Label { "Background" }
+                div { class: "flex items-center gap-2 flex-wrap",
+                    button {
+                        r#type: "button",
+                        class: toggle_class(bg_mode() == "default"),
+                        onclick: move |_| {
+                            bg_mode.set("default");
+                            theme.write().background_color = None;
+                            theme.write().background_image_url = None;
+                        },
+                        "Default"
+                    }
+                    button {
+                        r#type: "button",
+                        class: toggle_class(bg_mode() == "color"),
+                        onclick: move |_| {
+                            bg_mode.set("color");
+                            theme.write().background_image_url = None;
+                            let cur = theme.read().background_color.clone();
+                            theme.write().background_color = Some(cur.unwrap_or_else(|| "#0a0a0a".to_string()));
+                        },
+                        "Solid color"
+                    }
+                    button {
+                        r#type: "button",
+                        class: toggle_class(bg_mode() == "image"),
+                        onclick: move |_| {
+                            bg_mode.set("image");
+                            theme.write().background_color = None;
+                        },
+                        "Image"
+                    }
+
+                    if bg_mode() == "color" {
+                        input {
+                            r#type: "color",
+                            class: "h-9 w-14 rounded-md border border-input bg-transparent p-1",
+                            value: "{bg_color}",
+                            oninput: move |e| theme.write().background_color = Some(e.value()),
+                        }
+                    }
+                }
+
+                if bg_mode() == "image" {
+                    div { class: "flex flex-col gap-2",
+                        if let Some(url) = &bg_image_url {
+                            div { class: "rounded-lg border overflow-hidden bg-muted flex items-center justify-center h-32",
+                                img { src: "{API_BASE}{url}", class: "max-w-full max-h-32 object-contain" }
+                            }
+                        }
+                        div { class: "flex items-center gap-3",
+                            label {
+                                class: "cursor-pointer inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md px-3 h-9 hover:bg-accent transition-colors",
+                                Icon { name: "upload", size: "14" }
+                                if bg_uploading() { "Uploading…" } else { "Upload image" }
+                                input {
+                                    r#type: "file",
+                                    accept: "image/png,image/jpeg,image/gif,image/webp,image/svg+xml",
+                                    class: "hidden",
+                                    disabled: bg_uploading(),
+                                    onchange: move |evt: Event<FormData>| async move {
+                                        let files = evt.files();
+                                        let Some(file) = files.first() else { return; };
+                                        let content_type = file.content_type().unwrap_or_default();
+                                        bg_upload_error.set(None);
+                                        bg_uploading.set(true);
+                                        let Ok(bytes) = file.read_bytes().await else {
+                                            bg_uploading.set(false);
+                                            bg_upload_error.set(Some("Failed to read file".to_string()));
+                                            return;
+                                        };
+                                        let arr = js_sys::Uint8Array::from(bytes.as_ref());
+                                        let body = wasm_bindgen::JsValue::from(arr);
+                                        let result = Request::post(&format!("{API_BASE}/api/media"))
+                                            .header("content-type", &content_type)
+                                            .credentials(RequestCredentials::Include)
+                                            .body(body)
+                                            .unwrap()
+                                            .send()
+                                            .await;
+                                        match result {
+                                            Ok(resp) if resp.ok() => {
+                                                if let Ok(parsed) = resp.json::<MediaUploadResponse>().await {
+                                                    theme.write().background_image_url = Some(parsed.url);
+                                                } else {
+                                                    bg_upload_error.set(Some("Parse error".to_string()));
+                                                }
+                                            }
+                                            _ => bg_upload_error.set(Some("Upload failed".to_string())),
+                                        }
+                                        bg_uploading.set(false);
+                                    },
+                                }
+                            }
+                            if bg_image_url.is_some() {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    onclick: move |_| theme.write().background_image_url = None,
+                                    "Remove"
+                                }
+                            }
+                            if let Some(err) = bg_upload_error() {
+                                span { class: "text-xs text-destructive", "{err}" }
+                            }
+                        }
+                        p { class: "text-xs text-muted-foreground", "PNG, JPEG, GIF, WEBP or SVG · max 15MB" }
+                    }
+                }
+            }
+
+            // Text color
+            div { class: "flex flex-col gap-2",
+                Label { "Text color" }
+                div { class: "flex items-center gap-2",
+                    button {
+                        r#type: "button",
+                        class: toggle_class(!text_custom),
+                        onclick: move |_| theme.write().text_color = None,
+                        "Default"
+                    }
+                    button {
+                        r#type: "button",
+                        class: toggle_class(text_custom),
+                        onclick: move |_| {
+                            let cur = theme.read().text_color.clone();
+                            theme.write().text_color = Some(cur.unwrap_or_else(|| "#ffffff".to_string()));
+                        },
+                        "Custom"
+                    }
+                    if text_custom {
+                        input {
+                            r#type: "color",
+                            class: "h-9 w-14 rounded-md border border-input bg-transparent p-1",
+                            value: "{text_color}",
+                            oninput: move |e| theme.write().text_color = Some(e.value()),
+                        }
+                    }
+                }
+            }
+
+            // Font
+            div { class: "flex flex-col gap-2",
+                Label { "Font" }
+                div { class: "flex gap-1.5 flex-wrap",
+                    for (key , label) in [
+                        ("sans", "Sans"),
+                        ("serif", "Serif"),
+                        ("mono", "Mono"),
+                        ("display", "Display"),
+                    ] {
+                        button {
+                            r#type: "button",
+                            class: toggle_class(font_key(&font) == key),
+                            onclick: move |_| theme.write().font = key_to_font(key),
+                            "{label}"
                         }
                     }
                 }

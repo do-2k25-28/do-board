@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use serde::Deserialize;
-use shared::{ClockConfig, ClockStyle, Screen as SharedScreen, SlideConfig, SlideTransition};
+use shared::{
+    ClockConfig, ClockStyle, Screen as SharedScreen, ScreenFont, SlideConfig, SlideTransition,
+};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -154,6 +156,31 @@ const API_BASE: &str = match option_env!("API_BASE") {
     None => "",
 };
 
+/// Only accept `#rrggbb`, so a theme color can never break out of the inline
+/// `style` attribute built from it.
+fn sanitize_hex_color(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    (bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit))
+        .then_some(s)
+}
+
+/// Only accept our own upload path, so a theme image URL can never break out
+/// of the inline `style` attribute built from it.
+fn sanitize_media_url(s: &str) -> Option<&str> {
+    (s.starts_with("/api/media/") && !s.contains(['\'', '"', '(', ')'])).then_some(s)
+}
+
+fn font_family_css(font: &ScreenFont) -> &'static str {
+    match font {
+        ScreenFont::Sans => {
+            "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        }
+        ScreenFont::Serif => "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
+        ScreenFont::Mono => "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        ScreenFont::Display => "'Arial Black', 'Helvetica Neue', Arial, sans-serif",
+    }
+}
+
 // Can be overridden independently of the HTTP API base at build time. When
 // unset, derive a same-origin URL at runtime so the page's own reverse proxy
 // (nginx forwarding /ws to the backend) is used instead of a hardcoded host.
@@ -244,22 +271,22 @@ fn render_digital_clock(clock: &ClockConfig) -> Element {
     rsx! {
         div { class: "text-center select-none",
             if let Some(lbl) = &clock.label {
-                p { class: "text-white/40 text-xs uppercase tracking-widest mb-4", "{lbl}" }
+                p { class: "text-(--do-fg)/40 text-xs uppercase tracking-widest mb-4", "{lbl}" }
             }
             div { class: "font-mono tabular-nums flex items-start justify-center leading-none",
                 span {
-                    class: "text-white font-thin",
+                    class: "text-(--do-fg) font-thin",
                     style: "font-size: clamp(3rem, 11vmin, 8rem);",
                     "{hm}"
                 }
                 span {
-                    class: "text-white/40 font-thin",
+                    class: "text-(--do-fg)/40 font-thin",
                     style: "font-size: clamp(1.2rem, 3.5vmin, 2.8rem); margin-top: 0.45em;",
                     ":{ss}"
                 }
             }
-            p { class: "text-white/50 text-base mt-3", "{date}" }
-            p { class: "text-white/20 text-xs mt-1 tracking-wider", "{clock.timezone}" }
+            p { class: "text-(--do-fg)/50 text-base mt-3", "{date}" }
+            p { class: "text-(--do-fg)/20 text-xs mt-1 tracking-wider", "{clock.timezone}" }
         }
     }
 }
@@ -308,7 +335,7 @@ fn render_analog_clock(clock: &ClockConfig) -> Element {
     rsx! {
         div { class: "text-center select-none",
             if let Some(lbl) = &clock.label {
-                p { class: "text-white/40 text-xs uppercase tracking-widest mb-3", "{lbl}" }
+                p { class: "text-(--do-fg)/40 text-xs uppercase tracking-widest mb-3", "{lbl}" }
             }
             div { style: "width: 30vmin; height: 30vmin; margin: 0 auto;",
                 svg {
@@ -319,15 +346,16 @@ fn render_analog_clock(clock: &ClockConfig) -> Element {
                     circle {
                         cx: "100", cy: "100", r: "96",
                         fill: "none",
-                        stroke: "rgba(255,255,255,0.15)",
+                        stroke: "var(--do-fg)",
                         stroke_width: "1.5",
+                        opacity: "0.15",
                     }
                     // Hour tick marks
                     for tick in ticks.iter() {
                         line {
                             x1: "{tick.x1:.2}", y1: "{tick.y1:.2}",
                             x2: "{tick.x2:.2}", y2: "{tick.y2:.2}",
-                            stroke: "white",
+                            stroke: "var(--do-fg)",
                             stroke_width: if tick.major { "2.5" } else { "1" },
                             stroke_linecap: "round",
                             opacity: if tick.major { "0.65" } else { "0.22" },
@@ -337,7 +365,7 @@ fn render_analog_clock(clock: &ClockConfig) -> Element {
                     line {
                         x1: "100", y1: "100",
                         x2: "{hx:.2}", y2: "{hy:.2}",
-                        stroke: "white",
+                        stroke: "var(--do-fg)",
                         stroke_width: "5",
                         stroke_linecap: "round",
                         opacity: "0.92",
@@ -346,7 +374,7 @@ fn render_analog_clock(clock: &ClockConfig) -> Element {
                     line {
                         x1: "100", y1: "100",
                         x2: "{mx:.2}", y2: "{my:.2}",
-                        stroke: "white",
+                        stroke: "var(--do-fg)",
                         stroke_width: "2.5",
                         stroke_linecap: "round",
                         opacity: "0.85",
@@ -361,11 +389,11 @@ fn render_analog_clock(clock: &ClockConfig) -> Element {
                     }
                     // Center cap
                     circle { cx: "100", cy: "100", r: "5", fill: "#f87171" }
-                    circle { cx: "100", cy: "100", r: "2.5", fill: "white" }
+                    circle { cx: "100", cy: "100", r: "2.5", fill: "var(--do-fg)" }
                 }
             }
-            p { class: "text-white/50 text-base mt-3", "{date_in_tz(&clock.timezone)}" }
-            p { class: "text-white/20 text-xs mt-1 tracking-wider", "{clock.timezone}" }
+            p { class: "text-(--do-fg)/50 text-base mt-3", "{date_in_tz(&clock.timezone)}" }
+            p { class: "text-(--do-fg)/20 text-xs mt-1 tracking-wider", "{clock.timezone}" }
         }
     }
 }
@@ -575,21 +603,47 @@ pub fn Screen() -> Element {
         );
     });
 
+    let theme_style: String = {
+        let screen = current_screen.read();
+        let theme = screen.as_ref().map(|s| &s.theme);
+        let bg = theme
+            .and_then(|t| t.background_image_url.as_deref())
+            .and_then(sanitize_media_url)
+            .map(|url| {
+                format!("background-image:url('{API_BASE}{url}');background-size:cover;background-position:center;")
+            })
+            .or_else(|| {
+                theme
+                    .and_then(|t| t.background_color.as_deref())
+                    .and_then(sanitize_hex_color)
+                    .map(|color| format!("background-color:{color};"))
+            })
+            .unwrap_or_default();
+        let fg = theme
+            .and_then(|t| t.text_color.as_deref())
+            .and_then(sanitize_hex_color)
+            .unwrap_or("#ffffff");
+        let font = theme
+            .map(|t| font_family_css(&t.font))
+            .unwrap_or_else(|| font_family_css(&ScreenFont::Sans));
+        format!("{bg}--do-fg:{fg};font-family:{font};")
+    };
+
     let slide_content: Element = {
         let screen = current_screen.read();
         match screen.as_ref().and_then(|s| s.slides.get(idx)) {
             None if screen.is_some() => rsx! {
                 div { class: "flex items-center justify-center h-full",
-                    p { class: "text-white/30 text-lg", "No slides configured" }
+                    p { class: "text-(--do-fg)/30 text-lg", "No slides configured" }
                 }
             },
             None => rsx! {
                 div { class: "flex items-center justify-center h-full",
                     div { class: "text-center select-none",
-                        p { class: "text-white/20 text-3xl font-thin tracking-widest uppercase",
+                        p { class: "text-(--do-fg)/20 text-3xl font-thin tracking-widest uppercase",
                             "DO Board"
                         }
-                        p { class: "text-white/15 text-sm mt-3", "No screen assigned" }
+                        p { class: "text-(--do-fg)/15 text-sm mt-3", "No screen assigned" }
                     }
                 }
             },
@@ -680,11 +734,11 @@ pub fn Screen() -> Element {
                         .collect();
                     rsx! {
                         div { class: "flex flex-col items-center justify-center h-full gap-10 p-8",
-                            p { class: "text-white/40 text-xs uppercase tracking-widest",
+                            p { class: "text-(--do-fg)/40 text-xs uppercase tracking-widest",
                                 "🎂 Today's Birthdays"
                             }
                             if today_entries.is_empty() {
-                                p { class: "text-white/25 text-2xl font-thin", "No birthdays today" }
+                                p { class: "text-(--do-fg)/25 text-2xl font-thin", "No birthdays today" }
                             } else {
                                 div { class: "flex flex-wrap justify-center gap-10",
                                     for entry in today_entries.iter() {
@@ -697,12 +751,12 @@ pub fn Screen() -> Element {
                                             rsx! {
                                                 div { class: "text-center select-none",
                                                     p {
-                                                        class: "text-white font-medium",
+                                                        class: "text-(--do-fg) font-medium",
                                                         style: "font-size: clamp(1.5rem, 4vmin, 3rem);",
                                                         "{entry.name}"
                                                     }
                                                     if let Some(a) = age {
-                                                        p { class: "text-white/50 text-lg mt-2",
+                                                        p { class: "text-(--do-fg)/50 text-lg mt-2",
                                                             "{a} years old today"
                                                         }
                                                     }
@@ -738,7 +792,7 @@ pub fn Screen() -> Element {
                     }
                     None => rsx! {
                         div { class: "flex items-center justify-center h-full",
-                            p { class: "text-white/30 text-lg", "Invalid YouTube URL" }
+                            p { class: "text-(--do-fg)/30 text-lg", "Invalid YouTube URL" }
                         }
                     },
                 },
@@ -748,7 +802,7 @@ pub fn Screen() -> Element {
 
     rsx! {
         style { {SLIDE_CSS} }
-        div { class: "fixed inset-0 bg-zinc-950 overflow-hidden",
+        div { class: "fixed inset-0 bg-zinc-950 overflow-hidden", style: "{theme_style}",
             div {
                 id: "do-slide-anim",
                 class: "absolute inset-0 w-full h-full {anim_class}",
@@ -818,15 +872,15 @@ fn WeatherSlide(
         None if has_error() => rsx! {
             div { class: "flex items-center justify-center h-full",
                 div { class: "text-center select-none",
-                    p { class: "text-white/40 text-4xl mb-4", "⚠️" }
-                    p { class: "text-white/40 text-base", "Weather unavailable" }
-                    p { class: "text-white/20 text-sm mt-2", "{loc_display}" }
+                    p { class: "text-(--do-fg)/40 text-4xl mb-4", "⚠️" }
+                    p { class: "text-(--do-fg)/40 text-base", "Weather unavailable" }
+                    p { class: "text-(--do-fg)/20 text-sm mt-2", "{loc_display}" }
                 }
             }
         },
         None => rsx! {
             div { class: "flex items-center justify-center h-full",
-                p { class: "text-white/30 text-sm select-none", "Loading weather…" }
+                p { class: "text-(--do-fg)/30 text-sm select-none", "Loading weather…" }
             }
         },
         Some(wd) => {
@@ -841,17 +895,17 @@ fn WeatherSlide(
 
             rsx! {
                 div { class: "flex flex-col items-center justify-center h-full gap-6 p-8 select-none",
-                    p { class: "text-white/40 text-sm uppercase tracking-widest", "{loc_name}" }
+                    p { class: "text-(--do-fg)/40 text-sm uppercase tracking-widest", "{loc_name}" }
 
                     div { class: "flex flex-col items-center gap-2",
                         span { style: "font-size: clamp(3rem, 7vmin, 5rem); line-height:1;", "{emoji}" }
                         div {
-                            class: "text-white font-thin tabular-nums leading-none",
+                            class: "text-(--do-fg) font-thin tabular-nums leading-none",
                             style: "font-size: clamp(4rem, 15vmin, 10rem);",
                             "{temp}°"
                         }
-                        p { class: "text-white/60 text-xl", "{label}" }
-                        p { class: "text-white/30 text-sm",
+                        p { class: "text-(--do-fg)/60 text-xl", "{label}" }
+                        p { class: "text-(--do-fg)/30 text-sm",
                             "Feels like {feels}°  ·  Wind {wind} km/h"
                         }
                     }
@@ -865,12 +919,12 @@ fn WeatherSlide(
                                     } else {
                                         "flex flex-col items-center gap-1 rounded-xl bg-white/5 px-4 py-3 min-w-16"
                                     },
-                                    p { class: "text-white/40 text-xs",
+                                    p { class: "text-(--do-fg)/40 text-xs",
                                         if i == 0 { "Today" } else { "{day_label_from_date(&day.date)}" }
                                     }
                                     span { style: "font-size: 1.5rem; line-height:1;", "{wmo_emoji(day.weather_code)}" }
-                                    p { class: "text-white font-medium text-sm", "{day.temp_max.round() as i32}°" }
-                                    p { class: "text-white/30 text-xs", "{day.temp_min.round() as i32}°" }
+                                    p { class: "text-(--do-fg) font-medium text-sm", "{day.temp_max.round() as i32}°" }
+                                    p { class: "text-(--do-fg)/30 text-xs", "{day.temp_min.round() as i32}°" }
                                 }
                             }
                         }
@@ -932,33 +986,33 @@ fn TransportSlide(stop_ids: String, stop_name: String) -> Element {
             div { class: "flex items-center gap-4 mb-8",
                 div { class: "flex-1 min-w-0",
                     p {
-                        class: "text-white font-bold leading-tight truncate",
+                        class: "text-(--do-fg) font-bold leading-tight truncate",
                         style: "font-size: clamp(1.6rem, 4vmin, 2.8rem);",
                         "{stop_name}"
                     }
-                    p { class: "text-white/35 text-xs uppercase tracking-widest mt-1",
+                    p { class: "text-(--do-fg)/35 text-xs uppercase tracking-widest mt-1",
                         "TaM · Montpellier"
                     }
                 }
                 if loading() {
-                    p { class: "text-white/25 text-sm animate-pulse shrink-0", "…" }
+                    p { class: "text-(--do-fg)/25 text-sm animate-pulse shrink-0", "…" }
                 }
             }
 
             if config_error() {
                 div { class: "flex-1 flex flex-col items-center justify-center gap-3",
-                    p { class: "text-white/30 text-4xl", "⚙️" }
-                    p { class: "text-white/30 text-base text-center",
+                    p { class: "text-(--do-fg)/30 text-4xl", "⚙️" }
+                    p { class: "text-(--do-fg)/30 text-base text-center",
                         "Set "
-                        code { class: "text-white/50", "GTFS_STATIC_URL" }
+                        code { class: "text-(--do-fg)/50", "GTFS_STATIC_URL" }
                         " and "
-                        code { class: "text-white/50", "GTFS_RT_URL" }
+                        code { class: "text-(--do-fg)/50", "GTFS_RT_URL" }
                         " on the backend"
                     }
                 }
             } else if departures.read().is_empty() && !loading() {
                 div { class: "flex-1 flex items-center justify-center",
-                    p { class: "text-white/25 text-xl", "No upcoming departures" }
+                    p { class: "text-(--do-fg)/25 text-xl", "No upcoming departures" }
                 }
             } else {
                 div { class: "flex flex-col divide-y divide-white/10",
@@ -985,11 +1039,11 @@ fn TransportSlide(stop_ids: String, stop_name: String) -> Element {
                                     }
                                     div { class: "flex-1 min-w-0",
                                         p {
-                                            class: "text-white font-medium truncate",
+                                            class: "text-(--do-fg) font-medium truncate",
                                             style: "font-size: clamp(1rem, 2.8vmin, 1.5rem);",
                                             "{direction}"
                                         }
-                                        p { class: "text-white/35 text-xs mt-0.5",
+                                        p { class: "text-(--do-fg)/35 text-xs mt-0.5",
                                             "{mode_icon} {mode}"
                                         }
                                     }
@@ -998,7 +1052,7 @@ fn TransportSlide(stop_ids: String, stop_name: String) -> Element {
                                             class: if imminent {
                                                 "text-yellow-300 font-bold"
                                             } else {
-                                                "text-white font-semibold"
+                                                "text-(--do-fg) font-semibold"
                                             },
                                             style: "font-size: clamp(1rem, 2.8vmin, 1.5rem);",
                                             "{wlabel}"
