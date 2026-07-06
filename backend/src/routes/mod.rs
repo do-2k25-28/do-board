@@ -43,6 +43,10 @@ pub fn router() -> Router<AppState> {
                 .put(screens::update_screen)
                 .delete(screens::delete_screen),
         )
+        .route(
+            "/api/screens/{id}/leaderboard",
+            get(interact::get_screen_leaderboard),
+        )
         .route("/api/weather", get(weather::get_weather))
         .route("/api/media", post(media::upload_image))
         .route("/api/media/{id}", get(media::get_media))

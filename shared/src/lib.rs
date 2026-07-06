@@ -145,6 +145,9 @@ pub enum SlideConfig {
         session_id: String,
         interaction: InteractionKind,
     },
+    /// Passive display of a screen's cumulative bet leaderboard - no config
+    /// of its own, fed by `GET /api/screens/{screen_id}/leaderboard`.
+    Leaderboard {},
 }
 
 /// Config for an interactive slide, keyed by `kind` in JSON. Each variant is
@@ -156,14 +159,42 @@ pub enum InteractionKind {
         question: String,
         options: Vec<String>,
     },
-    /// Same shape as `Poll` - the stake lives on the response, not the config.
     Bet {
         question: String,
-        options: Vec<String>,
+        market: BetMarket,
+        /// Set by the admin once the real outcome is known, via the same
+        /// screen-save flow as any other slide edit. `None` while betting is
+        /// still open; once set, new responses are rejected.
+        #[serde(default)]
+        result: Option<BetOutcome>,
     },
     Drawing {
         prompt: String,
     },
+}
+
+/// What a `Bet` slide's participants are predicting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BetMarket {
+    Options {
+        options: Vec<String>,
+    },
+    Score {
+        home_label: String,
+        away_label: String,
+    },
+}
+
+/// A single predicted (or actual) outcome. Reused both for a participant's
+/// pick and for the admin-entered real result, since they share the same
+/// shape - `Score { home_score, away_score }` is a scoreline whether it's a
+/// guess or the final tally.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BetOutcome {
+    Options { option_index: usize },
+    Score { home_score: u32, away_score: u32 },
 }
 
 /// One freehand stroke on a shared drawing canvas. `points` are normalized to
@@ -183,13 +214,45 @@ pub enum InteractionResults {
     Poll {
         counts: Vec<u32>,
     },
-    /// Sum of stakes per option.
     Bet {
-        totals: Vec<u32>,
+        outcomes: Vec<BetOutcomeTotal>,
+        /// Winners and their payout, computed once the admin has entered the
+        /// real result. Empty while the bet is still open.
+        payouts: Vec<BetPayout>,
     },
     Drawing {
         strokes: Vec<DrawingStroke>,
     },
+}
+
+/// Live pari-mutuel tally for one possible outcome of a `Bet`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BetOutcomeTotal {
+    pub label: String,
+    pub stake_total: u32,
+    /// `pot / stake_total` - the live payout multiplier for this outcome.
+    /// `None` if nobody has staked on it yet (undefined).
+    pub odds: Option<f32>,
+}
+
+/// One winner's payout for a resolved `Bet`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BetPayout {
+    pub participant_id: String,
+    pub participant_name: String,
+    pub stake: u32,
+    pub payout: u32,
+}
+
+/// One row of a screen's cumulative bet leaderboard, summed across every
+/// resolved `Bet` slide that has ever run on that screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaderboardEntry {
+    pub participant_id: String,
+    pub participant_name: String,
+    pub total_payout: u32,
+    pub bets_played: u32,
+    pub bets_won: u32,
 }
 
 /// Returned by `GET /api/interact/{session_id}` for the public join page.
@@ -197,12 +260,22 @@ pub enum InteractionResults {
 pub struct InteractionInfo {
     pub interaction: InteractionKind,
     pub results: InteractionResults,
+    /// The most the requesting participant may currently stake on this bet.
+    /// Only set for an open `Bet` when the request identified the
+    /// participant (`?participant_id=`); `None` otherwise (Poll, Drawing, or
+    /// an anonymous/screen-side lookup).
+    #[serde(default)]
+    pub max_stake: Option<u32>,
 }
 
 /// Body of `POST /api/interact/{session_id}/respond`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InteractionSubmission {
     pub participant_name: String,
+    /// Stable id generated and persisted (e.g. in localStorage) on the
+    /// participant's device, so their score can be tracked across multiple
+    /// bets on the same screen.
+    pub participant_id: String,
     pub response: InteractionResponse,
 }
 
@@ -210,7 +283,7 @@ pub struct InteractionSubmission {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InteractionResponse {
     Poll { option_index: usize },
-    Bet { option_index: usize, stake: u32 },
+    Bet { pick: BetOutcome, stake: u32 },
     Drawing { stroke: DrawingStroke },
 }
 

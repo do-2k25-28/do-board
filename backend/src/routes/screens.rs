@@ -153,8 +153,16 @@ pub async fn update_screen(
             .await
             .unwrap_or_default();
 
+    let session_ids = interact::interactive_session_ids(&screen.slides);
+
     for device_id in devices_to_notify {
         let _ = pubsub::notify_device_push(&state.db, device_id, uuid).await;
+        // Also refresh any interactive slide's results (e.g. a bet just
+        // resolved with a result) so payouts show up without waiting for a
+        // new response to trigger it.
+        for &session_id in &session_ids {
+            let _ = pubsub::notify_interaction_update(&state.db, device_id, session_id).await;
+        }
     }
 
     Ok(Json(screen))
