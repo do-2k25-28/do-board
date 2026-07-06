@@ -138,6 +138,80 @@ pub enum SlideConfig {
         /// A YouTube URL (watch/share/embed/shorts link) or bare video ID.
         url: String,
     },
+    Interactive {
+        /// Stable uuid, generated once when the slide is created. Embedded in
+        /// the join URL/QR code shown on screen - must never be regenerated
+        /// on save, or existing QR codes/links stop working.
+        session_id: String,
+        interaction: InteractionKind,
+    },
+}
+
+/// Config for an interactive slide, keyed by `kind` in JSON. Each variant is
+/// the type-specific setup an editor fills in (question/options, etc.).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionKind {
+    Poll {
+        question: String,
+        options: Vec<String>,
+    },
+    /// Same shape as `Poll` - the stake lives on the response, not the config.
+    Bet {
+        question: String,
+        options: Vec<String>,
+    },
+    Drawing {
+        prompt: String,
+    },
+}
+
+/// One freehand stroke on a shared drawing canvas. `points` are normalized to
+/// 0.0-1.0 so a stroke drawn on one device's canvas scales cleanly onto a
+/// canvas of any other size (phone vs. screen).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DrawingStroke {
+    pub color: String,
+    pub points: Vec<[f32; 2]>,
+}
+
+/// Live aggregate results for an interaction session, pushed to the screen
+/// over the WebSocket and returned by the public join-page lookup.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionResults {
+    Poll {
+        counts: Vec<u32>,
+    },
+    /// Sum of stakes per option.
+    Bet {
+        totals: Vec<u32>,
+    },
+    Drawing {
+        strokes: Vec<DrawingStroke>,
+    },
+}
+
+/// Returned by `GET /api/interact/{session_id}` for the public join page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionInfo {
+    pub interaction: InteractionKind,
+    pub results: InteractionResults,
+}
+
+/// Body of `POST /api/interact/{session_id}/respond`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionSubmission {
+    pub participant_name: String,
+    pub response: InteractionResponse,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionResponse {
+    Poll { option_index: usize },
+    Bet { option_index: usize, stake: u32 },
+    Drawing { stroke: DrawingStroke },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

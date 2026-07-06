@@ -1,5 +1,6 @@
 mod birthdays;
 mod devices;
+pub(crate) mod interact;
 mod login;
 mod media;
 mod proxy;
@@ -50,5 +51,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/transport/departures", get(transport::get_departures))
         .route("/api/transport/stops", get(transport::search_stops))
         .route("/api/iframe-proxy/{*path}", any(proxy::proxy_all))
+        .route("/api/interact/{session_id}", get(interact::get_interaction))
+        .route(
+            "/api/interact/{session_id}/respond",
+            post(interact::respond),
+        )
         .route("/ws", get(devices::ws_handler))
 }

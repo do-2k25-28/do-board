@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 mod home;
+mod join;
 mod login;
 mod not_found;
 mod screen;
@@ -10,6 +11,7 @@ mod settings;
 mod users;
 
 pub use home::Home;
+pub use join::Join;
 pub use login::Login;
 pub use not_found::NotFound;
 pub use screen::Screen;
@@ -25,6 +27,8 @@ use crate::layouts::main_layout::MainLayout;
 pub enum Route {
     #[route("/")]
     Screen {},
+    #[route("/join/:session_id")]
+    Join { session_id: String },
     #[route("/login")]
     Login {},
     #[layout(AuthGuard)]

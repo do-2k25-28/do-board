@@ -84,6 +84,26 @@ fn new_slide(slide_type: &str) -> Slide {
         },
         "image" => SlideConfig::Image { url: String::new() },
         "video" => SlideConfig::Video { url: String::new() },
+        "poll" => SlideConfig::Interactive {
+            session_id: Uuid::new_v4().to_string(),
+            interaction: shared::InteractionKind::Poll {
+                question: String::new(),
+                options: vec![],
+            },
+        },
+        "bet" => SlideConfig::Interactive {
+            session_id: Uuid::new_v4().to_string(),
+            interaction: shared::InteractionKind::Bet {
+                question: String::new(),
+                options: vec![],
+            },
+        },
+        "drawing" => SlideConfig::Interactive {
+            session_id: Uuid::new_v4().to_string(),
+            interaction: shared::InteractionKind::Drawing {
+                prompt: String::new(),
+            },
+        },
         _ => SlideConfig::Clock {
             clocks: vec![ClockConfig {
                 timezone: "Europe/Paris".into(),
@@ -152,6 +172,11 @@ fn slide_label(config: &SlideConfig) -> &'static str {
         SlideConfig::Clock { .. } => "Clock",
         SlideConfig::Image { .. } => "Image",
         SlideConfig::Video { .. } => "Video",
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            shared::InteractionKind::Poll { .. } => "Poll",
+            shared::InteractionKind::Bet { .. } => "Bet",
+            shared::InteractionKind::Drawing { .. } => "Drawing",
+        },
     }
 }
 
@@ -164,6 +189,11 @@ fn slide_icon(config: &SlideConfig) -> &'static str {
         SlideConfig::Clock { .. } => "clock",
         SlideConfig::Image { .. } => "image",
         SlideConfig::Video { .. } => "video",
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            shared::InteractionKind::Poll { .. } => "list-checks",
+            shared::InteractionKind::Bet { .. } => "dices",
+            shared::InteractionKind::Drawing { .. } => "paintbrush",
+        },
     }
 }
 
@@ -326,6 +356,9 @@ pub fn ScreenEditor(id: String) -> Element {
                                 ("clock",     "Clock",     "clock"),
                                 ("image",     "Image",     "image"),
                                 ("video",     "Video",     "video"),
+                                ("poll",      "Poll",      "list-checks"),
+                                ("bet",       "Bet",       "dices"),
+                                ("drawing",   "Drawing",   "paintbrush"),
                             ] {
                                 button {
                                     class: if adding_type().as_deref() == Some(key) {
@@ -609,6 +642,11 @@ fn SlideRow(
             .join(", "),
         SlideConfig::Image { url } => url.chars().take(30).collect::<String>(),
         SlideConfig::Video { url } => url.chars().take(30).collect::<String>(),
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            shared::InteractionKind::Poll { question, .. } => question.clone(),
+            shared::InteractionKind::Bet { question, .. } => question.clone(),
+            shared::InteractionKind::Drawing { prompt } => prompt.clone(),
+        },
     };
 
     rsx! {
@@ -688,6 +726,11 @@ fn SlideDescription(config: SlideConfig) -> Element {
             .join(", "),
         SlideConfig::Image { url } => url.chars().take(30).collect::<String>(),
         SlideConfig::Video { url } => url.chars().take(30).collect::<String>(),
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            shared::InteractionKind::Poll { question, .. } => question.clone(),
+            shared::InteractionKind::Bet { question, .. } => question.clone(),
+            shared::InteractionKind::Drawing { prompt } => prompt.clone(),
+        },
     };
     rsx! {
         span { class: "text-xs text-muted-foreground truncate max-w-32", "{text}" }
@@ -706,6 +749,11 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
         SlideConfig::Clock { .. } => "clock",
         SlideConfig::Image { .. } => "image",
         SlideConfig::Video { .. } => "video",
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            shared::InteractionKind::Poll { .. } => "poll",
+            shared::InteractionKind::Bet { .. } => "bet",
+            shared::InteractionKind::Drawing { .. } => "drawing",
+        },
     };
     let slide_id = slide.id.clone();
     let mut duration = use_signal(|| slide.duration_secs);
@@ -804,6 +852,38 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
     };
     let mut video_url = use_signal(move || vid_url);
 
+    // Interactive
+    let interactive_session_id = if let SlideConfig::Interactive { session_id, .. } = &slide.config
+    {
+        session_id.clone()
+    } else {
+        Uuid::new_v4().to_string()
+    };
+    let (i_question, i_options) = match &slide.config {
+        SlideConfig::Interactive {
+            interaction: shared::InteractionKind::Poll { question, options },
+            ..
+        }
+        | SlideConfig::Interactive {
+            interaction: shared::InteractionKind::Bet { question, options },
+            ..
+        } => (question.clone(), options.clone()),
+        _ => (String::new(), vec![]),
+    };
+    let i_prompt = if let SlideConfig::Interactive {
+        interaction: shared::InteractionKind::Drawing { prompt },
+        ..
+    } = &slide.config
+    {
+        prompt.clone()
+    } else {
+        String::new()
+    };
+    let mut interactive_question = use_signal(move || i_question);
+    let mut interactive_options: Signal<Vec<String>> = use_signal(move || i_options);
+    let mut interactive_new_option = use_signal(String::new);
+    let mut interactive_prompt = use_signal(move || i_prompt);
+
     // Clock
     let c_init = if let SlideConfig::Clock { clocks } = &slide.config {
         clocks.clone()
@@ -864,6 +944,26 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
             },
             "image" => SlideConfig::Image { url: image_url() },
             "video" => SlideConfig::Video { url: video_url() },
+            "poll" => SlideConfig::Interactive {
+                session_id: interactive_session_id.clone(),
+                interaction: shared::InteractionKind::Poll {
+                    question: interactive_question(),
+                    options: interactive_options(),
+                },
+            },
+            "bet" => SlideConfig::Interactive {
+                session_id: interactive_session_id.clone(),
+                interaction: shared::InteractionKind::Bet {
+                    question: interactive_question(),
+                    options: interactive_options(),
+                },
+            },
+            "drawing" => SlideConfig::Interactive {
+                session_id: interactive_session_id.clone(),
+                interaction: shared::InteractionKind::Drawing {
+                    prompt: interactive_prompt(),
+                },
+            },
             _ => SlideConfig::Clock { clocks: clocks() },
         };
         on_save.call(Slide {
@@ -1580,6 +1680,81 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                     }
                     p { class: "text-xs text-muted-foreground",
                         "Paste a YouTube video, share, or embed link. It will loop and play muted on the screen."
+                    }
+                }
+            }
+
+            // Type-specific - Poll / Bet
+            if type_key == "poll" || type_key == "bet" {
+                div { class: "flex flex-col gap-4",
+                    div { class: "flex flex-col gap-2",
+                        Label { html_for: "iqquestion", "Question" }
+                        Input {
+                            id: "iqquestion",
+                            placeholder: "What's your favorite dish?",
+                            value: interactive_question(),
+                            oninput: move |v| interactive_question.set(v),
+                        }
+                    }
+                    div { class: "flex flex-col gap-2",
+                        p { class: "text-sm font-medium", "Options" }
+                        if !interactive_options.read().is_empty() {
+                            div { class: "flex flex-col divide-y rounded-lg border",
+                                for (i , option) in interactive_options.read().iter().enumerate() {
+                                    div { class: "flex items-center gap-2 px-3 py-2 text-sm",
+                                        span { class: "flex-1", "{option}" }
+                                        button {
+                                            r#type: "button",
+                                            class: "text-muted-foreground hover:text-destructive",
+                                            onclick: move |_| { interactive_options.write().remove(i); },
+                                            Icon { name: "x", size: "14" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        div { class: "flex gap-2",
+                            Input {
+                                placeholder: "New option",
+                                value: interactive_new_option(),
+                                oninput: move |v| interactive_new_option.set(v),
+                            }
+                            Button {
+                                variant: ButtonVariant::Outline,
+                                onclick: move |_| {
+                                    let opt = interactive_new_option();
+                                    if !opt.trim().is_empty() {
+                                        interactive_options.write().push(opt);
+                                        interactive_new_option.set(String::new());
+                                    }
+                                },
+                                "Add"
+                            }
+                        }
+                        if type_key == "bet" {
+                            p { class: "text-xs text-muted-foreground",
+                                "Each participant picks an option and stakes a number of points (max 1000) when joining."
+                            }
+                        }
+                        p { class: "text-xs text-muted-foreground",
+                            "The join link/QR code stays stable as long as this slide isn't deleted."
+                        }
+                    }
+                }
+            }
+
+            // Type-specific - Drawing
+            if type_key == "drawing" {
+                div { class: "flex flex-col gap-2",
+                    Label { html_for: "idprompt", "Prompt" }
+                    Input {
+                        id: "idprompt",
+                        placeholder: "Draw your favorite animal",
+                        value: interactive_prompt(),
+                        oninput: move |v| interactive_prompt.set(v),
+                    }
+                    p { class: "text-xs text-muted-foreground",
+                        "Everyone who joins draws on the same shared canvas, live."
                     }
                 }
             }

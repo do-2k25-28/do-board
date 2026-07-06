@@ -1,9 +1,11 @@
 use dioxus::prelude::*;
+use dioxus::web::WebEventExt;
 use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use serde::Deserialize;
 use shared::{
-    ClockConfig, ClockStyle, Screen as SharedScreen, ScreenFont, SlideConfig, SlideTransition,
+    ClockConfig, ClockStyle, DrawingStroke, InteractionInfo, InteractionKind, InteractionResults,
+    Screen as SharedScreen, ScreenFont, SlideConfig, SlideTransition,
 };
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -405,6 +407,7 @@ pub fn Screen() -> Element {
     let mut clock_tick = use_signal(|| 0u32);
     let mut transition_key = use_signal(|| 0u32);
     let mut weather_cache: Signal<HashMap<String, WeatherData>> = use_signal(HashMap::new);
+    let interaction_results: Signal<HashMap<String, InteractionResults>> = use_signal(HashMap::new);
 
     // Hold the WebSocket alive for the lifetime of the component. Bumping
     // `reconnect_tick` tears down and re-establishes it.
@@ -462,17 +465,35 @@ pub fn Screen() -> Element {
             return;
         };
 
+        let mut interaction_results = interaction_results;
         let onmessage_cb = Closure::<dyn FnMut(_)>::new(move |event: web_sys::MessageEvent| {
             if let Some(text) = event.data().as_string() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if val.get("type").and_then(|t| t.as_str()) == Some("set_screen") {
-                        if let Some(sv) = val.get("screen") {
-                            if let Ok(screen) = serde_json::from_value::<SharedScreen>(sv.clone()) {
-                                current_screen.set(Some(screen));
-                                current_slide.set(0);
-                                transition_key.set(transition_key() + 1);
+                    match val.get("type").and_then(|t| t.as_str()) {
+                        Some("set_screen") => {
+                            if let Some(sv) = val.get("screen") {
+                                if let Ok(screen) =
+                                    serde_json::from_value::<SharedScreen>(sv.clone())
+                                {
+                                    current_screen.set(Some(screen));
+                                    current_slide.set(0);
+                                    transition_key.set(transition_key() + 1);
+                                }
                             }
                         }
+                        Some("interaction_update") => {
+                            if let (Some(sid), Some(rv)) = (
+                                val.get("session_id").and_then(|v| v.as_str()),
+                                val.get("results"),
+                            ) {
+                                if let Ok(results) =
+                                    serde_json::from_value::<InteractionResults>(rv.clone())
+                                {
+                                    interaction_results.write().insert(sid.to_string(), results);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -796,6 +817,16 @@ pub fn Screen() -> Element {
                         }
                     },
                 },
+                SlideConfig::Interactive {
+                    session_id,
+                    interaction,
+                } => {
+                    let session_id = session_id.clone();
+                    let interaction = interaction.clone();
+                    rsx! {
+                        InteractiveSlide { session_id, interaction, results: interaction_results }
+                    }
+                }
             },
         }
     };
@@ -823,6 +854,226 @@ pub fn Screen() -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+// ── Interactive slide component ───────────────────────────────────────────────
+
+fn join_url(session_id: &str) -> String {
+    let origin = web_sys::window()
+        .and_then(|w| w.location().origin().ok())
+        .unwrap_or_default();
+    format!("{origin}/join/{session_id}")
+}
+
+fn qr_code_svg(data: &str) -> Option<String> {
+    let code = qrcode::QrCode::new(data.as_bytes()).ok()?;
+    Some(
+        code.render::<qrcode::render::svg::Color>()
+            .min_dimensions(240, 240)
+            .build(),
+    )
+}
+
+#[component]
+fn InteractiveSlide(
+    session_id: String,
+    interaction: InteractionKind,
+    results: Signal<HashMap<String, InteractionResults>>,
+) -> Element {
+    // Seed the initial tally once per session so a slide that hasn't received
+    // any live update yet (or is shown after a page reload) still displays
+    // the current count instead of all-zero bars.
+    use_effect({
+        let session_id = session_id.clone();
+        move || {
+            let session_id = session_id.clone();
+            if results.read().contains_key(&session_id) {
+                return;
+            }
+            spawn(async move {
+                if let Ok(resp) = Request::get(&format!("{API_BASE}/api/interact/{session_id}"))
+                    .send()
+                    .await
+                {
+                    if let Ok(info) = resp.json::<InteractionInfo>().await {
+                        results.write().insert(session_id.clone(), info.results);
+                    }
+                }
+            });
+        }
+    });
+
+    let url = join_url(&session_id);
+    let qr_svg = qr_code_svg(&url).unwrap_or_default();
+    let current = results.read().get(&session_id).cloned();
+
+    match interaction {
+        InteractionKind::Poll { question, options } => {
+            let counts = match &current {
+                Some(InteractionResults::Poll { counts }) => counts.clone(),
+                _ => vec![0u32; options.len()],
+            };
+            let total: u32 = counts.iter().sum();
+            rsx! {
+                div { class: "flex items-center justify-center h-full gap-16 p-12",
+                    div { class: "flex flex-col items-center gap-4",
+                        div {
+                            class: "bg-white rounded-2xl p-4",
+                            dangerous_inner_html: "{qr_svg}",
+                        }
+                        p { class: "text-(--do-fg)/60 text-sm", "{url}" }
+                    }
+                    div { class: "flex flex-col gap-6 max-w-xl",
+                        p { class: "text-(--do-fg) text-3xl font-semibold", "{question}" }
+                        div { class: "flex flex-col gap-3",
+                            for (i , option) in options.iter().enumerate() {
+                                BarRow {
+                                    label: option.clone(),
+                                    value: counts.get(i).copied().unwrap_or(0),
+                                    total,
+                                    suffix: "",
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        InteractionKind::Bet { question, options } => {
+            let totals = match &current {
+                Some(InteractionResults::Bet { totals }) => totals.clone(),
+                _ => vec![0u32; options.len()],
+            };
+            let total: u32 = totals.iter().sum();
+            rsx! {
+                div { class: "flex items-center justify-center h-full gap-16 p-12",
+                    div { class: "flex flex-col items-center gap-4",
+                        div {
+                            class: "bg-white rounded-2xl p-4",
+                            dangerous_inner_html: "{qr_svg}",
+                        }
+                        p { class: "text-(--do-fg)/60 text-sm", "{url}" }
+                    }
+                    div { class: "flex flex-col gap-6 max-w-xl",
+                        p { class: "text-(--do-fg) text-3xl font-semibold", "{question}" }
+                        div { class: "flex flex-col gap-3",
+                            for (i , option) in options.iter().enumerate() {
+                                BarRow {
+                                    label: option.clone(),
+                                    value: totals.get(i).copied().unwrap_or(0),
+                                    total,
+                                    suffix: " pts",
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        InteractionKind::Drawing { prompt } => {
+            rsx! {
+                div { class: "flex items-center justify-center h-full gap-16 p-12",
+                    div { class: "flex flex-col items-center gap-4",
+                        div {
+                            class: "bg-white rounded-2xl p-4",
+                            dangerous_inner_html: "{qr_svg}",
+                        }
+                        p { class: "text-(--do-fg)/60 text-sm", "{url}" }
+                    }
+                    div { class: "flex flex-col items-center gap-6",
+                        p { class: "text-(--do-fg) text-3xl font-semibold", "{prompt}" }
+                        DrawingCanvas { session_id, results }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn BarRow(label: String, value: u32, total: u32, suffix: String) -> Element {
+    let pct = if total == 0 {
+        0.0
+    } else {
+        value as f64 / total as f64 * 100.0
+    };
+    rsx! {
+        div { class: "flex flex-col gap-1",
+            div { class: "flex justify-between text-(--do-fg)/80 text-sm",
+                span { "{label}" }
+                span { "{value}{suffix}" }
+            }
+            div { class: "h-3 rounded-full bg-(--do-fg)/10 overflow-hidden",
+                div { class: "h-full rounded-full bg-(--do-fg)/60", style: "width:{pct}%;" }
+            }
+        }
+    }
+}
+
+const DRAWING_CANVAS_SIZE: f64 = 480.0;
+
+#[component]
+fn DrawingCanvas(
+    session_id: String,
+    results: Signal<HashMap<String, InteractionResults>>,
+) -> Element {
+    let mut canvas_el: Signal<Option<web_sys::HtmlCanvasElement>> = use_signal(|| None);
+
+    use_effect(move || {
+        let strokes: Vec<DrawingStroke> = match results.read().get(&session_id) {
+            Some(InteractionResults::Drawing { strokes }) => strokes.clone(),
+            _ => vec![],
+        };
+        let Some(canvas) = canvas_el() else {
+            return;
+        };
+        let Some(ctx) = canvas
+            .get_context("2d")
+            .ok()
+            .flatten()
+            .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
+        else {
+            return;
+        };
+        ctx.clear_rect(0.0, 0.0, DRAWING_CANVAS_SIZE, DRAWING_CANVAS_SIZE);
+        ctx.set_line_width(6.0);
+        ctx.set_line_cap("round");
+        ctx.set_line_join("round");
+        for stroke in &strokes {
+            let mut points = stroke.points.iter();
+            let Some(first) = points.next() else {
+                continue;
+            };
+            ctx.set_stroke_style_str(&stroke.color);
+            ctx.begin_path();
+            ctx.move_to(
+                first[0] as f64 * DRAWING_CANVAS_SIZE,
+                first[1] as f64 * DRAWING_CANVAS_SIZE,
+            );
+            for p in points {
+                ctx.line_to(
+                    p[0] as f64 * DRAWING_CANVAS_SIZE,
+                    p[1] as f64 * DRAWING_CANVAS_SIZE,
+                );
+            }
+            ctx.stroke();
+        }
+    });
+
+    rsx! {
+        canvas {
+            width: "480",
+            height: "480",
+            class: "rounded-2xl bg-white",
+            style: "width:{DRAWING_CANVAS_SIZE}px;height:{DRAWING_CANVAS_SIZE}px;",
+            onmounted: move |e| {
+                let web_el = e.data().as_web_event();
+                if let Ok(canvas) = web_el.dyn_into::<web_sys::HtmlCanvasElement>() {
+                    canvas_el.set(Some(canvas));
+                }
+            },
         }
     }
 }
