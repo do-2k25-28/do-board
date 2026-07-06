@@ -415,21 +415,11 @@ pub fn Screen() -> Element {
     let mut ws: Signal<Option<web_sys::WebSocket>> = use_signal(|| None);
     let mut reconnect_tick = use_signal(|| 0u32);
 
-    // Fetch default screen on mount
-    use_effect(move || {
-        spawn(async move {
-            if let Ok(resp) = Request::get(&format!("{API_BASE}/api/screens/default"))
-                .send()
-                .await
-            {
-                if let Ok(Some(screen)) = resp.json::<Option<SharedScreen>>().await {
-                    current_screen.set(Some(screen));
-                    current_slide.set(0);
-                    transition_key.set(transition_key() + 1);
-                }
-            }
-        });
-    });
+    // The screen to display is decided per-device, server-side, and arrives
+    // via the WebSocket's initial `set_screen` message below (the device's
+    // last-assigned screen, or the default if it has none) - no separate
+    // HTTP fetch here, so a stale "default" response can't race with and
+    // override that per-device assignment.
 
     // Pre-fetch weather data for all weather slides whenever the screen changes
     use_effect(move || {

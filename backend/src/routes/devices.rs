@@ -160,14 +160,38 @@ pub async fn ws_handler(
     let browser = parse_browser(&user_agent);
     let os = parse_os(&user_agent);
 
-    // Devices always reset to the current default screen on (re)connect.
-    let default_screen = screen_query::fetch_default_screen(&state.db)
-        .await
-        .ok()
-        .flatten();
-    let default_screen_uuid = default_screen
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(&s.id).ok());
+    // Reconnect to whatever screen was last explicitly pushed to this device
+    // (e.g. after a page refresh), so a push isn't lost the moment the
+    // WebSocket reconnects. Only fall back to the default screen if this
+    // device is new, or its assigned screen was deleted in the meantime.
+    let previous_screen_id: Option<Uuid> = sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT current_screen_id FROM devices WHERE id = $1",
+    )
+    .bind(fingerprint)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
+    let screen = match previous_screen_id {
+        Some(id) => match screen_query::fetch_screen(&state.db, id)
+            .await
+            .ok()
+            .flatten()
+        {
+            Some(screen) => Some(screen),
+            None => screen_query::fetch_default_screen(&state.db)
+                .await
+                .ok()
+                .flatten(),
+        },
+        None => screen_query::fetch_default_screen(&state.db)
+            .await
+            .ok()
+            .flatten(),
+    };
+    let screen_uuid = screen.as_ref().and_then(|s| Uuid::parse_str(&s.id).ok());
 
     let _ = sqlx::query(
         "INSERT INTO devices (id, ip, browser, os, online, connected_at, last_seen, current_screen_id)
@@ -180,13 +204,11 @@ pub async fn ws_handler(
     .bind(&ip)
     .bind(&browser)
     .bind(&os)
-    .bind(default_screen_uuid)
+    .bind(screen_uuid)
     .execute(&state.db)
     .await;
 
-    let initial_msg = default_screen
-        .as_ref()
-        .map(screen_query::set_screen_message);
+    let initial_msg = screen.as_ref().map(screen_query::set_screen_message);
     let db = state.db.clone();
 
     ws.on_upgrade(move |socket| {
