@@ -1,4 +1,4 @@
-use shared::Screen;
+use shared::{Screen, ScreenTheme};
 use sqlx::types::Json as SqlJson;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -9,11 +9,12 @@ struct ScreenRow {
     name: String,
     slides: SqlJson<Vec<shared::Slide>>,
     is_default: bool,
+    theme: SqlJson<ScreenTheme>,
 }
 
 pub async fn fetch_screen(db: &PgPool, id: Uuid) -> Result<Option<Screen>, sqlx::Error> {
     let row = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens WHERE id = $1",
+        "SELECT id, name, slides, is_default, theme FROM screens WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(db)
@@ -24,12 +25,13 @@ pub async fn fetch_screen(db: &PgPool, id: Uuid) -> Result<Option<Screen>, sqlx:
         name: r.name,
         slides: r.slides.0,
         is_default: r.is_default,
+        theme: r.theme.0,
     }))
 }
 
 pub async fn fetch_default_screen(db: &PgPool) -> Result<Option<Screen>, sqlx::Error> {
     let row = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens WHERE is_default = TRUE LIMIT 1",
+        "SELECT id, name, slides, is_default, theme FROM screens WHERE is_default = TRUE LIMIT 1",
     )
     .fetch_optional(db)
     .await?;
@@ -39,6 +41,7 @@ pub async fn fetch_default_screen(db: &PgPool) -> Result<Option<Screen>, sqlx::E
         name: r.name,
         slides: r.slides.0,
         is_default: r.is_default,
+        theme: r.theme.0,
     }))
 }
 

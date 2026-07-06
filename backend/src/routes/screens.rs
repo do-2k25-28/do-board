@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use shared::{CreateScreenRequest, Screen, Slide, UpdateScreenRequest};
+use shared::{CreateScreenRequest, Screen, ScreenTheme, Slide, UpdateScreenRequest};
 use sqlx::types::Json as SqlJson;
 use uuid::Uuid;
 
@@ -16,6 +16,7 @@ struct ScreenRow {
     name: String,
     slides: SqlJson<Vec<Slide>>,
     is_default: bool,
+    theme: SqlJson<ScreenTheme>,
 }
 
 fn to_screen(row: ScreenRow) -> Screen {
@@ -24,6 +25,7 @@ fn to_screen(row: ScreenRow) -> Screen {
         name: row.name,
         slides: row.slides.0,
         is_default: row.is_default,
+        theme: row.theme.0,
     }
 }
 
@@ -36,7 +38,7 @@ pub async fn list_screens(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Screen>>, (StatusCode, &'static str)> {
     let rows = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens ORDER BY created_at",
+        "SELECT id, name, slides, is_default, theme FROM screens ORDER BY created_at",
     )
     .fetch_all(&state.db)
     .await
@@ -49,7 +51,7 @@ pub async fn get_default_screen(
     State(state): State<AppState>,
 ) -> Result<Json<Option<Screen>>, (StatusCode, &'static str)> {
     let row = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens WHERE is_default = TRUE LIMIT 1",
+        "SELECT id, name, slides, is_default, theme FROM screens WHERE is_default = TRUE LIMIT 1",
     )
     .fetch_optional(&state.db)
     .await
@@ -89,7 +91,7 @@ pub async fn create_screen(
     Json(req): Json<CreateScreenRequest>,
 ) -> Result<Json<Screen>, (StatusCode, &'static str)> {
     let row = sqlx::query_as::<_, ScreenRow>(
-        "INSERT INTO screens (name) VALUES ($1) RETURNING id, name, slides, is_default",
+        "INSERT INTO screens (name) VALUES ($1) RETURNING id, name, slides, is_default, theme",
     )
     .bind(&req.name)
     .fetch_one(&state.db)
@@ -106,7 +108,7 @@ pub async fn get_screen(
 ) -> Result<Json<Screen>, (StatusCode, &'static str)> {
     let uuid = parse_uuid(&id)?;
     let row = sqlx::query_as::<_, ScreenRow>(
-        "SELECT id, name, slides, is_default FROM screens WHERE id = $1",
+        "SELECT id, name, slides, is_default, theme FROM screens WHERE id = $1",
     )
     .bind(uuid)
     .fetch_optional(&state.db)
@@ -125,11 +127,12 @@ pub async fn update_screen(
 ) -> Result<Json<Screen>, (StatusCode, &'static str)> {
     let uuid = parse_uuid(&id)?;
     let row = sqlx::query_as::<_, ScreenRow>(
-        "UPDATE screens SET name = $1, slides = $2
-         WHERE id = $3 RETURNING id, name, slides, is_default",
+        "UPDATE screens SET name = $1, slides = $2, theme = $3
+         WHERE id = $4 RETURNING id, name, slides, is_default, theme",
     )
     .bind(&req.name)
     .bind(SqlJson(&req.slides))
+    .bind(SqlJson(&req.theme))
     .bind(uuid)
     .fetch_optional(&state.db)
     .await

@@ -29,6 +29,36 @@ pub struct Screen {
     pub slides: Vec<Slide>,
     #[serde(default)]
     pub is_default: bool,
+    #[serde(default)]
+    pub theme: ScreenTheme,
+}
+
+/// Preset font stacks for on-screen text. Kept to system/web-safe fonts so
+/// signage never depends on a remote font fetch succeeding.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenFont {
+    #[default]
+    Sans,
+    Serif,
+    Mono,
+    Display,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ScreenTheme {
+    /// CSS color (e.g. `#0a0a0a`). `None` = default dark background.
+    #[serde(default)]
+    pub background_color: Option<String>,
+    /// Path to an uploaded image, e.g. `/api/media/{id}`. Takes priority over
+    /// `background_color` when set.
+    #[serde(default)]
+    pub background_image_url: Option<String>,
+    /// CSS color (e.g. `#ffffff`). `None` = default white text.
+    #[serde(default)]
+    pub text_color: Option<String>,
+    #[serde(default)]
+    pub font: ScreenFont,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +183,8 @@ pub struct CreateScreenRequest {
 pub struct UpdateScreenRequest {
     pub name: String,
     pub slides: Vec<Slide>,
+    #[serde(default)]
+    pub theme: ScreenTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
