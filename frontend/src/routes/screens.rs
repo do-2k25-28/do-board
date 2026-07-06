@@ -3,7 +3,7 @@ use crate::components::{Button, ButtonVariant, Icon, Input, Label};
 use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
-use shared::{CreateScreenRequest, Screen, SlideConfig};
+use shared::{CreateScreenRequest, InteractionKind, Screen, SlideConfig};
 use web_sys::RequestCredentials;
 
 const API_BASE: &str = match option_env!("API_BASE") {
@@ -20,6 +20,11 @@ fn slide_type_label(config: &SlideConfig) -> &'static str {
         SlideConfig::Clock { .. } => "Clock",
         SlideConfig::Image { .. } => "Image",
         SlideConfig::Video { .. } => "Video",
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            InteractionKind::Poll { .. } => "Poll",
+            InteractionKind::Bet { .. } => "Bet",
+            InteractionKind::Drawing { .. } => "Drawing",
+        },
     }
 }
 
@@ -32,6 +37,11 @@ fn slide_type_icon(config: &SlideConfig) -> &'static str {
         SlideConfig::Clock { .. } => "clock",
         SlideConfig::Image { .. } => "image",
         SlideConfig::Video { .. } => "video",
+        SlideConfig::Interactive { interaction, .. } => match interaction {
+            InteractionKind::Poll { .. } => "list-checks",
+            InteractionKind::Bet { .. } => "dices",
+            InteractionKind::Drawing { .. } => "paintbrush",
+        },
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::auth::AuthUser;
 use crate::pubsub;
+use crate::routes::interact;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -140,6 +141,8 @@ pub async fn update_screen(
     .ok_or((StatusCode::NOT_FOUND, "Screen not found"))?;
 
     let screen = to_screen(row);
+
+    let _ = interact::sync_sessions(&state.db, uuid, &screen.slides).await;
 
     // Push the updated screen to every device currently displaying it,
     // wherever (which replica) they happen to be connected.
