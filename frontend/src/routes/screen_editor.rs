@@ -1,4 +1,4 @@
-use crate::components::{Button, ButtonSize, ButtonVariant, Icon, Input, Label};
+use crate::components::{Button, ButtonSize, ButtonVariant, Checkbox, Icon, Input, Label};
 use crate::routes::Route;
 use dioxus::prelude::*;
 use gloo_net::http::Request;
@@ -95,7 +95,8 @@ fn new_slide(slide_type: &str) -> Slide {
             session_id: Uuid::new_v4().to_string(),
             interaction: shared::InteractionKind::Bet {
                 question: String::new(),
-                options: vec![],
+                market: shared::BetMarket::Options { options: vec![] },
+                result: None,
             },
         },
         "drawing" => SlideConfig::Interactive {
@@ -104,6 +105,7 @@ fn new_slide(slide_type: &str) -> Slide {
                 prompt: String::new(),
             },
         },
+        "leaderboard" => SlideConfig::Leaderboard {},
         _ => SlideConfig::Clock {
             clocks: vec![ClockConfig {
                 timezone: "Europe/Paris".into(),
@@ -177,6 +179,7 @@ fn slide_label(config: &SlideConfig) -> &'static str {
             shared::InteractionKind::Bet { .. } => "Bet",
             shared::InteractionKind::Drawing { .. } => "Drawing",
         },
+        SlideConfig::Leaderboard {} => "Leaderboard",
     }
 }
 
@@ -194,6 +197,7 @@ fn slide_icon(config: &SlideConfig) -> &'static str {
             shared::InteractionKind::Bet { .. } => "dices",
             shared::InteractionKind::Drawing { .. } => "paintbrush",
         },
+        SlideConfig::Leaderboard {} => "trophy",
     }
 }
 
@@ -359,6 +363,7 @@ pub fn ScreenEditor(id: String) -> Element {
                                 ("poll",      "Poll",      "list-checks"),
                                 ("bet",       "Bet",       "dices"),
                                 ("drawing",   "Drawing",   "paintbrush"),
+                                ("leaderboard", "Leaderboard", "trophy"),
                             ] {
                                 button {
                                     class: if adding_type().as_deref() == Some(key) {
@@ -647,6 +652,7 @@ fn SlideRow(
             shared::InteractionKind::Bet { question, .. } => question.clone(),
             shared::InteractionKind::Drawing { prompt } => prompt.clone(),
         },
+        SlideConfig::Leaderboard {} => String::new(),
     };
 
     rsx! {
@@ -731,6 +737,7 @@ fn SlideDescription(config: SlideConfig) -> Element {
             shared::InteractionKind::Bet { question, .. } => question.clone(),
             shared::InteractionKind::Drawing { prompt } => prompt.clone(),
         },
+        SlideConfig::Leaderboard {} => String::new(),
     };
     rsx! {
         span { class: "text-xs text-muted-foreground truncate max-w-32", "{text}" }
@@ -754,6 +761,7 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
             shared::InteractionKind::Bet { .. } => "bet",
             shared::InteractionKind::Drawing { .. } => "drawing",
         },
+        SlideConfig::Leaderboard {} => "leaderboard",
     };
     let slide_id = slide.id.clone();
     let mut duration = use_signal(|| slide.duration_secs);
@@ -859,16 +867,31 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
     } else {
         Uuid::new_v4().to_string()
     };
-    let (i_question, i_options) = match &slide.config {
+    let i_question = match &slide.config {
         SlideConfig::Interactive {
-            interaction: shared::InteractionKind::Poll { question, options },
+            interaction: shared::InteractionKind::Poll { question, .. },
             ..
         }
         | SlideConfig::Interactive {
-            interaction: shared::InteractionKind::Bet { question, options },
+            interaction: shared::InteractionKind::Bet { question, .. },
             ..
-        } => (question.clone(), options.clone()),
-        _ => (String::new(), vec![]),
+        } => question.clone(),
+        _ => String::new(),
+    };
+    let i_options: Vec<String> = match &slide.config {
+        SlideConfig::Interactive {
+            interaction: shared::InteractionKind::Poll { options, .. },
+            ..
+        } => options.clone(),
+        SlideConfig::Interactive {
+            interaction:
+                shared::InteractionKind::Bet {
+                    market: shared::BetMarket::Options { options },
+                    ..
+                },
+            ..
+        } => options.clone(),
+        _ => vec![],
     };
     let i_prompt = if let SlideConfig::Interactive {
         interaction: shared::InteractionKind::Drawing { prompt },
@@ -883,6 +906,49 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
     let mut interactive_options: Signal<Vec<String>> = use_signal(move || i_options);
     let mut interactive_new_option = use_signal(String::new);
     let mut interactive_prompt = use_signal(move || i_prompt);
+
+    // Bet - market (options vs. exact score) and the a-posteriori result
+    let (bet_market_kind_init, bet_home_label_init, bet_away_label_init) = match &slide.config {
+        SlideConfig::Interactive {
+            interaction: shared::InteractionKind::Bet { market, .. },
+            ..
+        } => match market {
+            shared::BetMarket::Options { .. } => {
+                ("options".to_string(), String::new(), String::new())
+            }
+            shared::BetMarket::Score {
+                home_label,
+                away_label,
+            } => ("score".to_string(), home_label.clone(), away_label.clone()),
+        },
+        _ => ("options".to_string(), String::new(), String::new()),
+    };
+    let (bet_result_set_init, bet_result_index_init, bet_result_home_init, bet_result_away_init) =
+        if let SlideConfig::Interactive {
+            interaction: shared::InteractionKind::Bet { result, .. },
+            ..
+        } = &slide.config
+        {
+            match result {
+                Some(shared::BetOutcome::Options { option_index }) => {
+                    (true, Some(*option_index), 0u32, 0u32)
+                }
+                Some(shared::BetOutcome::Score {
+                    home_score,
+                    away_score,
+                }) => (true, None, *home_score, *away_score),
+                None => (false, None, 0u32, 0u32),
+            }
+        } else {
+            (false, None, 0u32, 0u32)
+        };
+    let mut bet_market_kind = use_signal(move || bet_market_kind_init);
+    let mut bet_home_label = use_signal(move || bet_home_label_init);
+    let mut bet_away_label = use_signal(move || bet_away_label_init);
+    let mut bet_result_set = use_signal(move || bet_result_set_init);
+    let mut bet_result_index: Signal<Option<usize>> = use_signal(move || bet_result_index_init);
+    let mut bet_result_home = use_signal(move || bet_result_home_init);
+    let mut bet_result_away = use_signal(move || bet_result_away_init);
 
     // Clock
     let c_init = if let SlideConfig::Clock { clocks } = &slide.config {
@@ -951,19 +1017,45 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                     options: interactive_options(),
                 },
             },
-            "bet" => SlideConfig::Interactive {
-                session_id: interactive_session_id.clone(),
-                interaction: shared::InteractionKind::Bet {
-                    question: interactive_question(),
-                    options: interactive_options(),
-                },
-            },
+            "bet" => {
+                let is_score = bet_market_kind() == "score";
+                let market = if is_score {
+                    shared::BetMarket::Score {
+                        home_label: bet_home_label(),
+                        away_label: bet_away_label(),
+                    }
+                } else {
+                    shared::BetMarket::Options {
+                        options: interactive_options(),
+                    }
+                };
+                let result = if !bet_result_set() {
+                    None
+                } else if is_score {
+                    Some(shared::BetOutcome::Score {
+                        home_score: bet_result_home(),
+                        away_score: bet_result_away(),
+                    })
+                } else {
+                    bet_result_index()
+                        .map(|option_index| shared::BetOutcome::Options { option_index })
+                };
+                SlideConfig::Interactive {
+                    session_id: interactive_session_id.clone(),
+                    interaction: shared::InteractionKind::Bet {
+                        question: interactive_question(),
+                        market,
+                        result,
+                    },
+                }
+            }
             "drawing" => SlideConfig::Interactive {
                 session_id: interactive_session_id.clone(),
                 interaction: shared::InteractionKind::Drawing {
                     prompt: interactive_prompt(),
                 },
             },
+            "leaderboard" => SlideConfig::Leaderboard {},
             _ => SlideConfig::Clock { clocks: clocks() },
         };
         on_save.call(Slide {
@@ -1684,8 +1776,8 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                 }
             }
 
-            // Type-specific - Poll / Bet
-            if type_key == "poll" || type_key == "bet" {
+            // Type-specific - Poll
+            if type_key == "poll" {
                 div { class: "flex flex-col gap-4",
                     div { class: "flex flex-col gap-2",
                         Label { html_for: "iqquestion", "Question" }
@@ -1731,13 +1823,170 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                                 "Add"
                             }
                         }
-                        if type_key == "bet" {
+                        p { class: "text-xs text-muted-foreground",
+                            "The join link/QR code stays stable as long as this slide isn't deleted."
+                        }
+                    }
+                }
+            }
+
+            // Type-specific - Bet
+            if type_key == "bet" {
+                div { class: "flex flex-col gap-4",
+                    div { class: "flex flex-col gap-2",
+                        Label { html_for: "bquestion", "Question" }
+                        Input {
+                            id: "bquestion",
+                            placeholder: "Who wins tonight?",
+                            value: interactive_question(),
+                            oninput: move |v| interactive_question.set(v),
+                        }
+                    }
+                    div { class: "flex flex-col gap-1",
+                        Label { html_for: "bmarket", "Bet type" }
+                        select {
+                            id: "bmarket",
+                            class: "border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none",
+                            value: bet_market_kind(),
+                            oninput: move |e| bet_market_kind.set(e.value()),
+                            option { value: "options", "List of options" }
+                            option { value: "score", "Exact score (2 teams)" }
+                        }
+                    }
+                    if bet_market_kind() == "score" {
+                        div { class: "flex gap-2",
+                            div { class: "flex flex-1 flex-col gap-1",
+                                Label { html_for: "bhome", "Home team" }
+                                Input {
+                                    id: "bhome",
+                                    placeholder: "Home team",
+                                    value: bet_home_label(),
+                                    oninput: move |v| bet_home_label.set(v),
+                                }
+                            }
+                            div { class: "flex flex-1 flex-col gap-1",
+                                Label { html_for: "baway", "Away team" }
+                                Input {
+                                    id: "baway",
+                                    placeholder: "Away team",
+                                    value: bet_away_label(),
+                                    oninput: move |v| bet_away_label.set(v),
+                                }
+                            }
+                        }
+                        p { class: "text-xs text-muted-foreground",
+                            "Each participant predicts the final score and stakes a number of points (max 1000)."
+                        }
+                    } else {
+                        div { class: "flex flex-col gap-2",
+                            p { class: "text-sm font-medium", "Options" }
+                            if !interactive_options.read().is_empty() {
+                                div { class: "flex flex-col divide-y rounded-lg border",
+                                    for (i , option) in interactive_options.read().iter().enumerate() {
+                                        div { class: "flex items-center gap-2 px-3 py-2 text-sm",
+                                            span { class: "flex-1", "{option}" }
+                                            button {
+                                                r#type: "button",
+                                                class: "text-muted-foreground hover:text-destructive",
+                                                onclick: move |_| { interactive_options.write().remove(i); },
+                                                Icon { name: "x", size: "14" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "flex gap-2",
+                                Input {
+                                    placeholder: "New option",
+                                    value: interactive_new_option(),
+                                    oninput: move |v| interactive_new_option.set(v),
+                                }
+                                Button {
+                                    variant: ButtonVariant::Outline,
+                                    onclick: move |_| {
+                                        let opt = interactive_new_option();
+                                        if !opt.trim().is_empty() {
+                                            interactive_options.write().push(opt);
+                                            interactive_new_option.set(String::new());
+                                        }
+                                    },
+                                    "Add"
+                                }
+                            }
                             p { class: "text-xs text-muted-foreground",
                                 "Each participant picks an option and stakes a number of points (max 1000) when joining."
                             }
                         }
-                        p { class: "text-xs text-muted-foreground",
-                            "The join link/QR code stays stable as long as this slide isn't deleted."
+                    }
+                    p { class: "text-xs text-muted-foreground",
+                        "The join link/QR code stays stable as long as this slide isn't deleted."
+                    }
+
+                    // Result - entered a posteriori, once the real outcome is known.
+                    div { class: "flex flex-col gap-2 rounded-lg border p-3",
+                        div { class: "flex items-center justify-between",
+                            p { class: "text-sm font-medium", "Result" }
+                            label { class: "flex items-center gap-2 text-xs text-muted-foreground",
+                                Checkbox {
+                                    checked: bet_result_set(),
+                                    onchange: move |v| bet_result_set.set(v),
+                                }
+                                "Result known"
+                            }
+                        }
+                        if bet_result_set() {
+                            if bet_market_kind() == "score" {
+                                div { class: "flex items-center justify-center gap-3",
+                                    input {
+                                        r#type: "number",
+                                        min: "0",
+                                        max: "99",
+                                        class: "border-input flex h-9 w-16 rounded-md border bg-transparent px-2 py-1 text-center text-sm shadow-xs outline-none",
+                                        value: "{bet_result_home}",
+                                        oninput: move |e| {
+                                            if let Ok(v) = e.value().parse::<u32>() {
+                                                bet_result_home.set(v.clamp(0, 99));
+                                            }
+                                        },
+                                    }
+                                    span { "-" }
+                                    input {
+                                        r#type: "number",
+                                        min: "0",
+                                        max: "99",
+                                        class: "border-input flex h-9 w-16 rounded-md border bg-transparent px-2 py-1 text-center text-sm shadow-xs outline-none",
+                                        value: "{bet_result_away}",
+                                        oninput: move |e| {
+                                            if let Ok(v) = e.value().parse::<u32>() {
+                                                bet_result_away.set(v.clamp(0, 99));
+                                            }
+                                        },
+                                    }
+                                }
+                            } else {
+                                div { class: "flex flex-col gap-1",
+                                    for (i , option) in interactive_options.read().iter().enumerate() {
+                                        {
+                                            let is_selected = bet_result_index() == Some(i);
+                                            rsx! {
+                                                button {
+                                                    r#type: "button",
+                                                    class: if is_selected {
+                                                        "w-full rounded-md border-2 border-ring bg-accent px-3 py-1.5 text-left text-sm font-medium transition-colors"
+                                                    } else {
+                                                        "w-full rounded-md border border-border px-3 py-1.5 text-left text-sm hover:bg-accent transition-colors"
+                                                    },
+                                                    onclick: move |_| bet_result_index.set(Some(i)),
+                                                    "{option}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            p { class: "text-xs text-muted-foreground",
+                                "Once saved, betting closes and the screen shows the winners and their payouts."
+                            }
                         }
                     }
                 }

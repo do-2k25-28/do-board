@@ -4,8 +4,9 @@ use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use serde::Deserialize;
 use shared::{
-    ClockConfig, ClockStyle, DrawingStroke, InteractionInfo, InteractionKind, InteractionResults,
-    Screen as SharedScreen, ScreenFont, SlideConfig, SlideTransition,
+    BetMarket, BetOutcome, ClockConfig, ClockStyle, DrawingStroke, InteractionInfo,
+    InteractionKind, InteractionResults, LeaderboardEntry, Screen as SharedScreen, ScreenFont,
+    SlideConfig, SlideTransition,
 };
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -652,6 +653,7 @@ pub fn Screen() -> Element {
 
     let slide_content: Element = {
         let screen = current_screen.read();
+        let screen_id = screen.as_ref().map(|s| s.id.clone()).unwrap_or_default();
         match screen.as_ref().and_then(|s| s.slides.get(idx)) {
             None if screen.is_some() => rsx! {
                 div { class: "flex items-center justify-center h-full",
@@ -827,6 +829,9 @@ pub fn Screen() -> Element {
                         InteractiveSlide { session_id, interaction, results: interaction_results }
                     }
                 }
+                SlideConfig::Leaderboard {} => rsx! {
+                    LeaderboardSlide { screen_id: screen_id.clone() }
+                },
             },
         }
     };
@@ -874,6 +879,33 @@ fn qr_code_svg(data: &str) -> Option<String> {
             .min_dimensions(240, 240)
             .build(),
     )
+}
+
+fn format_bet_outcome(market: &BetMarket, outcome: &BetOutcome) -> String {
+    match (market, outcome) {
+        (BetMarket::Options { options }, BetOutcome::Options { option_index }) => options
+            .get(*option_index)
+            .cloned()
+            .unwrap_or_else(|| format!("Option {option_index}")),
+        (
+            BetMarket::Score {
+                home_label,
+                away_label,
+            },
+            BetOutcome::Score {
+                home_score,
+                away_score,
+            },
+        ) => format!("{home_label} {home_score} - {away_score} {away_label}"),
+        (
+            _,
+            BetOutcome::Score {
+                home_score,
+                away_score,
+            },
+        ) => format!("{home_score} - {away_score}"),
+        (_, BetOutcome::Options { option_index }) => format!("Option {option_index}"),
+    }
 }
 
 #[component]
@@ -941,12 +973,18 @@ fn InteractiveSlide(
                 }
             }
         }
-        InteractionKind::Bet { question, options } => {
-            let totals = match &current {
-                Some(InteractionResults::Bet { totals }) => totals.clone(),
-                _ => vec![0u32; options.len()],
+        InteractionKind::Bet {
+            question,
+            market,
+            result,
+        } => {
+            let (outcomes, payouts) = match &current {
+                Some(InteractionResults::Bet { outcomes, payouts }) => {
+                    (outcomes.clone(), payouts.clone())
+                }
+                _ => (Vec::new(), Vec::new()),
             };
-            let total: u32 = totals.iter().sum();
+            let stake_pot: u32 = outcomes.iter().map(|o| o.stake_total).sum();
             rsx! {
                 div { class: "flex items-center justify-center h-full gap-16 p-12",
                     div { class: "flex flex-col items-center gap-4",
@@ -958,13 +996,40 @@ fn InteractiveSlide(
                     }
                     div { class: "flex flex-col gap-6 max-w-xl",
                         p { class: "text-(--do-fg) text-3xl font-semibold", "{question}" }
-                        div { class: "flex flex-col gap-3",
-                            for (i , option) in options.iter().enumerate() {
-                                BarRow {
-                                    label: option.clone(),
-                                    value: totals.get(i).copied().unwrap_or(0),
-                                    total,
-                                    suffix: " pts",
+                        if result.is_none() {
+                            div { class: "flex flex-col gap-3",
+                                if outcomes.is_empty() {
+                                    p { class: "text-(--do-fg)/40 text-base", "No bets yet" }
+                                }
+                                for outcome in outcomes.iter() {
+                                    OddsRow {
+                                        label: outcome.label.clone(),
+                                        stake_total: outcome.stake_total,
+                                        pot: stake_pot,
+                                        odds: outcome.odds,
+                                    }
+                                }
+                            }
+                        } else {
+                            div { class: "flex flex-col gap-4",
+                                div { class: "flex flex-col gap-1",
+                                    p { class: "text-(--do-fg)/70 text-lg", "Betting is closed" }
+                                    p { class: "text-(--do-fg) text-2xl font-semibold",
+                                        "Result: {format_bet_outcome(&market, result.as_ref().unwrap())}"
+                                    }
+                                }
+                                if payouts.is_empty() {
+                                    p { class: "text-(--do-fg)/40 text-base", "Nobody won this time" }
+                                } else {
+                                    div { class: "flex flex-col gap-2",
+                                        for payout in payouts.iter() {
+                                            div {
+                                                class: "flex justify-between items-center text-(--do-fg) text-lg",
+                                                span { "{payout.participant_name}" }
+                                                span { class: "font-semibold", "{payout.payout} pts" }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1007,6 +1072,86 @@ fn BarRow(label: String, value: u32, total: u32, suffix: String) -> Element {
             }
             div { class: "h-3 rounded-full bg-(--do-fg)/10 overflow-hidden",
                 div { class: "h-full rounded-full bg-(--do-fg)/60", style: "width:{pct}%;" }
+            }
+        }
+    }
+}
+
+/// Like `BarRow`, but also shows the live pari-mutuel odds (payout
+/// multiplier) for this bet outcome.
+#[component]
+fn OddsRow(label: String, stake_total: u32, pot: u32, odds: Option<f32>) -> Element {
+    let pct = if pot == 0 {
+        0.0
+    } else {
+        stake_total as f64 / pot as f64 * 100.0
+    };
+    let odds_label = match odds {
+        Some(o) => format!("x{o:.2}"),
+        None => "—".to_string(),
+    };
+    rsx! {
+        div { class: "flex flex-col gap-1",
+            div { class: "flex justify-between text-(--do-fg)/80 text-sm",
+                span { "{label}" }
+                span {
+                    "{stake_total} pts "
+                    span { class: "text-(--do-fg) font-semibold", "{odds_label}" }
+                }
+            }
+            div { class: "h-3 rounded-full bg-(--do-fg)/10 overflow-hidden",
+                div { class: "h-full rounded-full bg-(--do-fg)/60", style: "width:{pct}%;" }
+            }
+        }
+    }
+}
+
+// ── Leaderboard slide component ───────────────────────────────────────────────
+
+#[component]
+fn LeaderboardSlide(screen_id: String) -> Element {
+    let mut leaderboard: Signal<Option<Vec<LeaderboardEntry>>> = use_signal(|| None);
+
+    use_effect({
+        let screen_id = screen_id.clone();
+        move || {
+            let screen_id = screen_id.clone();
+            spawn(async move {
+                if let Ok(resp) =
+                    Request::get(&format!("{API_BASE}/api/screens/{screen_id}/leaderboard"))
+                        .send()
+                        .await
+                {
+                    if let Ok(entries) = resp.json::<Vec<LeaderboardEntry>>().await {
+                        leaderboard.set(Some(entries));
+                    }
+                }
+            });
+        }
+    });
+
+    rsx! {
+        div { class: "flex flex-col items-center justify-center h-full gap-8 p-12",
+            p { class: "text-(--do-fg)/40 text-xs uppercase tracking-widest", "🏆 Leaderboard" }
+            match leaderboard() {
+                None => rsx! {
+                    p { class: "text-(--do-fg)/30 text-lg", "Loading…" }
+                },
+                Some(entries) if entries.is_empty() => rsx! {
+                    p { class: "text-(--do-fg)/30 text-lg", "No resolved bets yet" }
+                },
+                Some(entries) => rsx! {
+                    div { class: "flex flex-col gap-3 w-full max-w-lg",
+                        for (i , entry) in entries.iter().enumerate() {
+                            div {
+                                class: "flex items-center gap-4 text-(--do-fg) text-xl",
+                                span { class: "w-8 text-(--do-fg)/40 font-semibold", "#{i + 1}" }
+                                span { class: "flex-1 font-medium", "{entry.participant_name}" }
+                                span { class: "font-semibold", "{entry.total_payout} pts" }
+                            }
+                        }
+                    }
+                },
             }
         }
     }

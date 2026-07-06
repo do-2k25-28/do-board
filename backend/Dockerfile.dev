@@ -7,6 +7,7 @@ WORKDIR /app
 CMD ["cargo", "watch", \
      "-w", "backend/src", \
      "-w", "backend/Cargo.toml", \
+     "-w", "backend/migrations", \
      "-w", "shared/src", \
      "-w", "shared/Cargo.toml", \
      "-x", "run -p backend"]

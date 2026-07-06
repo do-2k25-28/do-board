@@ -25,6 +25,7 @@ fn slide_type_label(config: &SlideConfig) -> &'static str {
             InteractionKind::Bet { .. } => "Bet",
             InteractionKind::Drawing { .. } => "Drawing",
         },
+        SlideConfig::Leaderboard {} => "Leaderboard",
     }
 }
 
@@ -42,6 +43,7 @@ fn slide_type_icon(config: &SlideConfig) -> &'static str {
             InteractionKind::Bet { .. } => "dices",
             InteractionKind::Drawing { .. } => "paintbrush",
         },
+        SlideConfig::Leaderboard {} => "trophy",
     }
 }
 
