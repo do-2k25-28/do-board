@@ -1,3 +1,4 @@
+use crate::auth::AuthUser;
 use axum::{
     body::Bytes,
     http::{header, StatusCode},
@@ -9,7 +10,9 @@ use rust_xlsxwriter::Workbook;
 use shared::BirthdayEntry;
 use std::io::Cursor;
 
-pub async fn get_template() -> Response {
+const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024; // 5 MB
+
+pub async fn get_template(_auth: AuthUser) -> Response {
     let mut workbook = Workbook::new();
     let ws = workbook.add_worksheet();
     let _ = ws.write(0, 0, "Name");
@@ -41,7 +44,14 @@ pub async fn get_template() -> Response {
         .into_response()
 }
 
-pub async fn import_xlsx(body: Bytes) -> Result<Json<Vec<BirthdayEntry>>, StatusCode> {
+pub async fn import_xlsx(
+    _auth: AuthUser,
+    body: Bytes,
+) -> Result<Json<Vec<BirthdayEntry>>, StatusCode> {
+    if body.len() > MAX_UPLOAD_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
     let cursor = Cursor::new(body.to_vec());
     let mut workbook: Xlsx<_> =
         open_workbook_from_rs(cursor).map_err(|_| StatusCode::BAD_REQUEST)?;
