@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 pub const DEVICE_PUSH_CHANNEL: &str = "device_push";
 pub const INTERACTION_UPDATE_CHANNEL: &str = "interaction_update";
+pub const GAMBLE_UPDATE_CHANNEL: &str = "gamble_update";
 
 #[derive(Serialize, Deserialize)]
 struct PushNotification {
@@ -17,6 +18,12 @@ struct PushNotification {
 
 #[derive(Serialize, Deserialize)]
 struct InteractionPushNotification {
+    device_id: Uuid,
+    session_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GamblePushNotification {
     device_id: Uuid,
     session_id: Uuid,
 }
@@ -121,6 +128,84 @@ async fn run_interaction_updates(state: &AppState) -> Result<(), sqlx::Error> {
             "type": "interaction_update",
             "session_id": payload.session_id,
             "results": results,
+        })
+        .to_string();
+
+        let senders = state.device_senders.lock().await;
+        if let Some(tx) = senders.get(&payload.device_id) {
+            let _ = tx.send(Message::Text(msg_text.into()));
+        }
+    }
+}
+
+/// Notify every backend replica that `device_id`'s currently displayed
+/// gamble table (`session_id`) has moved on (new cards, a resolved round,
+/// etc). Same re-fetch-on-delivery approach as `notify_interaction_update`.
+pub async fn notify_gamble_update(
+    db: &sqlx::PgPool,
+    device_id: Uuid,
+    session_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let payload = serde_json::to_string(&GamblePushNotification {
+        device_id,
+        session_id,
+    })
+    .unwrap_or_default();
+
+    sqlx::query("SELECT pg_notify($1, $2)")
+        .bind(GAMBLE_UPDATE_CHANNEL)
+        .bind(payload)
+        .execute(db)
+        .await?;
+
+    Ok(())
+}
+
+/// Runs for the lifetime of the process. Listens on `GAMBLE_UPDATE_CHANNEL`
+/// and, for every notification, delivers the fresh table state to the
+/// device's WebSocket if (and only if) it is connected to this replica.
+pub fn spawn_gamble_update_listener(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(err) = run_gamble_updates(&state).await {
+                eprintln!("[pubsub] gamble listener error: {err}, reconnecting in 5s");
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
+}
+
+async fn run_gamble_updates(state: &AppState) -> Result<(), sqlx::Error> {
+    let mut listener = PgListener::connect_with(&state.db).await?;
+    listener.listen(GAMBLE_UPDATE_CHANNEL).await?;
+
+    loop {
+        let notification = listener.recv().await?;
+
+        let Ok(payload) = serde_json::from_str::<GamblePushNotification>(notification.payload())
+        else {
+            continue;
+        };
+
+        let is_local = state
+            .device_senders
+            .lock()
+            .await
+            .contains_key(&payload.device_id);
+        if !is_local {
+            continue;
+        }
+
+        let Ok(Some((info, _screen_id))) =
+            crate::routes::gamble::compute_gamble_info(&state.db, payload.session_id, None).await
+        else {
+            continue;
+        };
+
+        let msg_text = serde_json::json!({
+            "type": "gamble_update",
+            "session_id": payload.session_id,
+            "info": info,
         })
         .to_string();
 

@@ -106,6 +106,10 @@ fn new_slide(slide_type: &str) -> Slide {
             },
         },
         "leaderboard" => SlideConfig::Leaderboard {},
+        "gamble" => SlideConfig::Gamble {
+            session_id: Uuid::new_v4().to_string(),
+            game: shared::GambleGame::Blackjack(shared::BlackjackConfig {}),
+        },
         _ => SlideConfig::Clock {
             clocks: vec![ClockConfig {
                 timezone: "Europe/Paris".into(),
@@ -180,6 +184,9 @@ fn slide_label(config: &SlideConfig) -> &'static str {
             shared::InteractionKind::Drawing { .. } => "Drawing",
         },
         SlideConfig::Leaderboard {} => "Leaderboard",
+        SlideConfig::Gamble { game, .. } => match game {
+            shared::GambleGame::Blackjack(_) => "Blackjack",
+        },
     }
 }
 
@@ -198,6 +205,7 @@ fn slide_icon(config: &SlideConfig) -> &'static str {
             shared::InteractionKind::Drawing { .. } => "paintbrush",
         },
         SlideConfig::Leaderboard {} => "trophy",
+        SlideConfig::Gamble { .. } => "spade",
     }
 }
 
@@ -351,29 +359,47 @@ pub fn ScreenEditor(id: String) -> Element {
                 } else {
                     div { class: "rounded-xl border bg-card p-4",
                         p { class: "text-sm font-medium mb-3", "Choose slide type" }
-                        div { class: "grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4",
-                            for (key, label, icon) in [
-                                ("weather",   "Weather",   "cloud-sun"),
-                                ("transport", "Transport", "bus"),
-                                ("birthdays", "Birthdays", "cake"),
-                                ("iframe",    "iFrame",    "globe"),
-                                ("clock",     "Clock",     "clock"),
-                                ("image",     "Image",     "image"),
-                                ("video",     "Video",     "video"),
-                                ("poll",      "Poll",      "list-checks"),
-                                ("bet",       "Bet",       "dices"),
-                                ("drawing",   "Drawing",   "paintbrush"),
-                                ("leaderboard", "Leaderboard", "trophy"),
+                        div { class: "flex flex-col gap-4 mb-4",
+                            for (category, items) in [
+                                ("Information", vec![
+                                    ("weather",   "Weather",   "cloud-sun"),
+                                    ("transport", "Transport", "bus"),
+                                    ("birthdays", "Birthdays", "cake"),
+                                    ("clock",     "Clock",     "clock"),
+                                ]),
+                                ("Media", vec![
+                                    ("iframe", "iFrame", "globe"),
+                                    ("image",  "Image",  "image"),
+                                    ("video",  "Video",  "video"),
+                                ]),
+                                ("Interactive", vec![
+                                    ("poll",    "Poll",    "list-checks"),
+                                    ("drawing", "Drawing", "paintbrush"),
+                                ]),
+                                ("Games", vec![
+                                    ("bet",     "Bet",     "dices"),
+                                    ("gamble",      "Blackjack",   "spade"),
+                                    ("leaderboard", "Leaderboard", "trophy"),
+                                ]),
                             ] {
-                                button {
-                                    class: if adding_type().as_deref() == Some(key) {
-                                        "flex flex-col items-center gap-1 rounded-lg border-2 border-ring bg-accent p-3 text-xs font-medium transition-colors"
-                                    } else {
-                                        "flex flex-col items-center gap-1 rounded-lg border border-border p-3 text-xs font-medium hover:bg-accent transition-colors"
-                                    },
-                                    onclick: move |_| adding_type.set(Some(key.into())),
-                                    Icon { name: icon, size: "20" }
-                                    "{label}"
+                                div { class: "flex flex-col gap-2",
+                                    p { class: "text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                                        "{category}"
+                                    }
+                                    div { class: "grid grid-cols-3 sm:grid-cols-5 gap-2",
+                                        for (key, label, icon) in items {
+                                            button {
+                                                class: if adding_type().as_deref() == Some(key) {
+                                                    "flex flex-col items-center gap-1 rounded-lg border-2 border-ring bg-accent p-3 text-xs font-medium transition-colors"
+                                                } else {
+                                                    "flex flex-col items-center gap-1 rounded-lg border border-border p-3 text-xs font-medium hover:bg-accent transition-colors"
+                                                },
+                                                onclick: move |_| adding_type.set(Some(key.into())),
+                                                Icon { name: icon, size: "20" }
+                                                "{label}"
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -653,6 +679,7 @@ fn SlideRow(
             shared::InteractionKind::Drawing { prompt } => prompt.clone(),
         },
         SlideConfig::Leaderboard {} => String::new(),
+        SlideConfig::Gamble { .. } => String::new(),
     };
 
     rsx! {
@@ -738,6 +765,7 @@ fn SlideDescription(config: SlideConfig) -> Element {
             shared::InteractionKind::Drawing { prompt } => prompt.clone(),
         },
         SlideConfig::Leaderboard {} => String::new(),
+        SlideConfig::Gamble { .. } => String::new(),
     };
     rsx! {
         span { class: "text-xs text-muted-foreground truncate max-w-32", "{text}" }
@@ -762,6 +790,7 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
             shared::InteractionKind::Drawing { .. } => "drawing",
         },
         SlideConfig::Leaderboard {} => "leaderboard",
+        SlideConfig::Gamble { .. } => "gamble",
     };
     let slide_id = slide.id.clone();
     let mut duration = use_signal(|| slide.duration_secs);
@@ -863,6 +892,14 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
     // Interactive
     let interactive_session_id = if let SlideConfig::Interactive { session_id, .. } = &slide.config
     {
+        session_id.clone()
+    } else {
+        Uuid::new_v4().to_string()
+    };
+
+    // Gamble - no editable config in v1, just needs to keep its stable
+    // session_id (the join URL/QR code) across edits.
+    let gamble_session_id = if let SlideConfig::Gamble { session_id, .. } = &slide.config {
         session_id.clone()
     } else {
         Uuid::new_v4().to_string()
@@ -1056,6 +1093,10 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                 },
             },
             "leaderboard" => SlideConfig::Leaderboard {},
+            "gamble" => SlideConfig::Gamble {
+                session_id: gamble_session_id.clone(),
+                game: shared::GambleGame::Blackjack(shared::BlackjackConfig {}),
+            },
             _ => SlideConfig::Clock { clocks: clocks() },
         };
         on_save.call(Slide {

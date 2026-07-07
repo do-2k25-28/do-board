@@ -217,11 +217,11 @@ API_BASE=http://localhost:3000 dx serve
 ## Star History
 
 <div align="center">
-  <a href="https://www.star-history.com/?type=date&repos=do-2k25-28%2Fdo-board">
+  <a href="https://www.star-history.com/?repos=do-2k25-28%2Fdo-board&type=date&legend=top-left">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=do-2k25-28/do-board&type=date&theme=dark&legend=top-left" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=do-2k25-28/do-board&type=date&legend=top-left" />
-      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=do-2k25-28/do-board&type=date&legend=top-left" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=do-2k25-28/do-board&type=date&theme=dark&legend=top-left&sealed_token=8eenpA_8JEshaCIxiwJqVihrQ6cycglwE7NYNvyFEzTrOl3JMmAKbXfhTKa04N3_dgYOVuD1E4aE9QItrsI2kSTuoLhmNDzSD4T0ekz06ZeYtFTBoD_Cs_ASvB_8Ed4QVpC28X6mEgFYcLOBkzuZAIbjNY5-4RoeArg0rBS0PkDLlHBsu-_kXMSElos0" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=do-2k25-28/do-board&type=date&legend=top-left&sealed_token=8eenpA_8JEshaCIxiwJqVihrQ6cycglwE7NYNvyFEzTrOl3JMmAKbXfhTKa04N3_dgYOVuD1E4aE9QItrsI2kSTuoLhmNDzSD4T0ekz06ZeYtFTBoD_Cs_ASvB_8Ed4QVpC28X6mEgFYcLOBkzuZAIbjNY5-4RoeArg0rBS0PkDLlHBsu-_kXMSElos0" />
+      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=do-2k25-28/do-board&type=date&legend=top-left&sealed_token=8eenpA_8JEshaCIxiwJqVihrQ6cycglwE7NYNvyFEzTrOl3JMmAKbXfhTKa04N3_dgYOVuD1E4aE9QItrsI2kSTuoLhmNDzSD4T0ekz06ZeYtFTBoD_Cs_ASvB_8Ed4QVpC28X6mEgFYcLOBkzuZAIbjNY5-4RoeArg0rBS0PkDLlHBsu-_kXMSElos0" />
     </picture>
   </a>
 </div>

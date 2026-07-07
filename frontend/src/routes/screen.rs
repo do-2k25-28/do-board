@@ -4,9 +4,9 @@ use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use serde::Deserialize;
 use shared::{
-    BetMarket, BetOutcome, ClockConfig, ClockStyle, DrawingStroke, InteractionInfo,
-    InteractionKind, InteractionResults, LeaderboardEntry, Screen as SharedScreen, ScreenFont,
-    SlideConfig, SlideTransition,
+    BetMarket, BetOutcome, Card, ClockConfig, ClockStyle, DrawingStroke, GambleGame, GambleInfo,
+    GambleTableState, InteractionInfo, InteractionKind, InteractionResults, LeaderboardEntry,
+    Screen as SharedScreen, ScreenFont, Seat, SeatStatus, SlideConfig, SlideTransition, Suit,
 };
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -409,6 +409,7 @@ pub fn Screen() -> Element {
     let mut transition_key = use_signal(|| 0u32);
     let mut weather_cache: Signal<HashMap<String, WeatherData>> = use_signal(HashMap::new);
     let interaction_results: Signal<HashMap<String, InteractionResults>> = use_signal(HashMap::new);
+    let gamble_info: Signal<HashMap<String, GambleInfo>> = use_signal(HashMap::new);
 
     // Hold the WebSocket alive for the lifetime of the component. Bumping
     // `reconnect_tick` tears down and re-establishes it.
@@ -457,6 +458,7 @@ pub fn Screen() -> Element {
         };
 
         let mut interaction_results = interaction_results;
+        let mut gamble_info = gamble_info;
         let onmessage_cb = Closure::<dyn FnMut(_)>::new(move |event: web_sys::MessageEvent| {
             if let Some(text) = event.data().as_string() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -481,6 +483,16 @@ pub fn Screen() -> Element {
                                     serde_json::from_value::<InteractionResults>(rv.clone())
                                 {
                                     interaction_results.write().insert(sid.to_string(), results);
+                                }
+                            }
+                        }
+                        Some("gamble_update") => {
+                            if let (Some(sid), Some(iv)) = (
+                                val.get("session_id").and_then(|v| v.as_str()),
+                                val.get("info"),
+                            ) {
+                                if let Ok(info) = serde_json::from_value::<GambleInfo>(iv.clone()) {
+                                    gamble_info.write().insert(sid.to_string(), info);
                                 }
                             }
                         }
@@ -822,6 +834,13 @@ pub fn Screen() -> Element {
                 SlideConfig::Leaderboard {} => rsx! {
                     LeaderboardSlide { screen_id: screen_id.clone() }
                 },
+                SlideConfig::Gamble { session_id, game } => {
+                    let session_id = session_id.clone();
+                    let game = game.clone();
+                    rsx! {
+                        GambleSlide { session_id, game, info: gamble_info }
+                    }
+                }
             },
         }
     };
@@ -860,6 +879,13 @@ fn join_url(session_id: &str) -> String {
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_default();
     format!("{origin}/join/{session_id}")
+}
+
+fn gamble_join_url(session_id: &str) -> String {
+    let origin = web_sys::window()
+        .and_then(|w| w.location().origin().ok())
+        .unwrap_or_default();
+    format!("{origin}/gamble/{session_id}")
 }
 
 fn qr_code_svg(data: &str) -> Option<String> {
@@ -1133,14 +1159,218 @@ fn LeaderboardSlide(screen_id: String) -> Element {
                 Some(entries) => rsx! {
                     div { class: "flex flex-col gap-3 w-full max-w-lg",
                         for (i , entry) in entries.iter().enumerate() {
-                            div {
-                                class: "flex items-center gap-4 text-(--do-fg) text-xl",
-                                span { class: "w-8 text-(--do-fg)/40 font-semibold", "#{i + 1}" }
-                                span { class: "flex-1 font-medium", "{entry.participant_name}" }
-                                span { class: "font-semibold", "{entry.total_payout} pts" }
+                            {
+                                let score_class = if entry.net_score > 0 {
+                                    "font-semibold text-green-500"
+                                } else if entry.net_score < 0 {
+                                    "font-semibold text-red-400"
+                                } else {
+                                    "font-semibold"
+                                };
+                                rsx! {
+                                    div {
+                                        class: "flex items-center gap-4 text-(--do-fg) text-xl",
+                                        span { class: "w-8 text-(--do-fg)/40 font-semibold", "#{i + 1}" }
+                                        span { class: "flex-1 font-medium", "{entry.participant_name}" }
+                                        span { class: score_class, "{entry.net_score} pts" }
+                                    }
+                                }
                             }
                         }
                     }
+                },
+            }
+        }
+    }
+}
+
+// ── Gamble (Blackjack) slide component ────────────────────────────────────────
+
+fn card_label(card: &Card) -> String {
+    let rank = match card.rank {
+        1 => "A".to_string(),
+        11 => "J".to_string(),
+        12 => "Q".to_string(),
+        13 => "K".to_string(),
+        n => n.to_string(),
+    };
+    let suit = match card.suit {
+        Suit::Hearts => "♥",
+        Suit::Diamonds => "♦",
+        Suit::Clubs => "♣",
+        Suit::Spades => "♠",
+    };
+    format!("{rank}{suit}")
+}
+
+/// Mirrors the backend's ace-aware hand value (`gamble::hand_value`) purely
+/// for display - not authoritative, the server always has the last word.
+fn hand_total_label(hand: &[Card]) -> String {
+    let mut total: u16 = 0;
+    let mut aces = 0u8;
+    for card in hand {
+        total += u16::from(card.rank.min(10));
+        if card.rank == 1 {
+            aces += 1;
+        }
+    }
+    while aces > 0 && total + 10 <= 21 {
+        total += 10;
+        aces -= 1;
+    }
+    total.to_string()
+}
+
+#[component]
+fn PlayingCard(card: Card) -> Element {
+    let color_class = if matches!(card.suit, Suit::Hearts | Suit::Diamonds) {
+        "text-red-600"
+    } else {
+        "text-zinc-900"
+    };
+    rsx! {
+        div { class: "flex items-center justify-center w-10 h-14 rounded-md bg-white font-bold text-lg shadow {color_class}",
+            "{card_label(&card)}"
+        }
+    }
+}
+
+#[component]
+fn HiddenCard() -> Element {
+    rsx! {
+        div { class: "w-10 h-14 rounded-md bg-(--do-fg)/20 border border-(--do-fg)/30" }
+    }
+}
+
+#[component]
+fn SeatCard(seat: Seat) -> Element {
+    let status_label = match seat.status {
+        SeatStatus::Playing => "Playing…",
+        SeatStatus::Stood => "Stood",
+        SeatStatus::Busted => "Busted",
+        SeatStatus::Blackjack => "Blackjack!",
+    };
+    let payout_class = seat.payout.map(|payout| {
+        if payout > seat.stake {
+            "text-green-400 font-semibold text-sm"
+        } else if payout == seat.stake {
+            "text-(--do-fg)/50 text-sm"
+        } else {
+            "text-red-400 font-semibold text-sm"
+        }
+    });
+
+    rsx! {
+        div { class: "flex flex-col items-center gap-2 rounded-xl border border-(--do-fg)/10 bg-(--do-fg)/5 p-4 min-w-40",
+            p { class: "text-(--do-fg) font-medium", "{seat.participant_name}" }
+            p { class: "text-(--do-fg)/50 text-xs", "{seat.stake} pts" }
+            div { class: "flex gap-1",
+                for card in seat.hand.iter() {
+                    PlayingCard { card: *card }
+                }
+            }
+            p { class: "text-(--do-fg)/70 text-sm", "{hand_total_label(&seat.hand)}" }
+            p { class: "text-(--do-fg)/50 text-xs", "{status_label}" }
+            if let Some(payout) = seat.payout {
+                p { class: payout_class.unwrap_or_default(), "{payout} pts" }
+            }
+        }
+    }
+}
+
+#[component]
+fn GambleSlide(
+    session_id: String,
+    game: GambleGame,
+    info: Signal<HashMap<String, GambleInfo>>,
+) -> Element {
+    use_effect({
+        let session_id = session_id.clone();
+        move || {
+            let session_id = session_id.clone();
+            if info.read().contains_key(&session_id) {
+                return;
+            }
+            spawn(async move {
+                if let Ok(resp) = Request::get(&format!("{API_BASE}/api/gamble/{session_id}"))
+                    .send()
+                    .await
+                {
+                    if let Ok(parsed) = resp.json::<GambleInfo>().await {
+                        info.write().insert(session_id.clone(), parsed);
+                    }
+                }
+            });
+        }
+    });
+
+    let title = match &game {
+        GambleGame::Blackjack(_) => "Blackjack",
+    };
+    let url = gamble_join_url(&session_id);
+    let qr_svg = qr_code_svg(&url).unwrap_or_default();
+    let current = info.read().get(&session_id).cloned();
+
+    rsx! {
+        div { class: "flex flex-col items-center justify-center h-full gap-8 p-10",
+            p { class: "text-(--do-fg)/40 text-xs uppercase tracking-widest", "🂡 {title}" }
+            match &current {
+                None => rsx! {
+                    p { class: "text-(--do-fg)/30 text-lg", "Loading table…" }
+                },
+                Some(table_info) => match &table_info.state {
+                    GambleTableState::Betting { seats, .. } => rsx! {
+                        div { class: "flex flex-col items-center gap-4",
+                            p { class: "text-(--do-fg) text-2xl font-semibold", "Place your bets!" }
+                            div { class: "bg-white rounded-2xl p-4", dangerous_inner_html: "{qr_svg}" }
+                            p { class: "text-(--do-fg)/60 text-sm", "{url}" }
+                            if !seats.is_empty() {
+                                div { class: "flex gap-3 flex-wrap justify-center mt-2",
+                                    for seat in seats.iter() {
+                                        div { class: "flex flex-col items-center gap-1 rounded-lg bg-(--do-fg)/5 px-3 py-2",
+                                            span { class: "text-(--do-fg) text-sm font-medium", "{seat.participant_name}" }
+                                            span { class: "text-(--do-fg)/50 text-xs", "{seat.stake} pts" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    GambleTableState::PlayerTurns { dealer_up_card, seats } => rsx! {
+                        div { class: "flex flex-col items-center gap-6",
+                            div { class: "flex flex-col items-center gap-2",
+                                p { class: "text-(--do-fg)/50 text-sm", "Dealer" }
+                                div { class: "flex gap-1",
+                                    PlayingCard { card: *dealer_up_card }
+                                    HiddenCard {}
+                                }
+                            }
+                            div { class: "flex gap-4 flex-wrap justify-center",
+                                for seat in seats.iter() {
+                                    SeatCard { seat: seat.clone() }
+                                }
+                            }
+                        }
+                    },
+                    GambleTableState::DealerPlay { dealer_hand, seats }
+                    | GambleTableState::Resolved { dealer_hand, seats } => rsx! {
+                        div { class: "flex flex-col items-center gap-6",
+                            div { class: "flex flex-col items-center gap-2",
+                                p { class: "text-(--do-fg)/50 text-sm", "Dealer" }
+                                div { class: "flex gap-1",
+                                    for card in dealer_hand.iter() {
+                                        PlayingCard { card: *card }
+                                    }
+                                }
+                                p { class: "text-(--do-fg)/70 text-sm", "{hand_total_label(dealer_hand)}" }
+                            }
+                            div { class: "flex gap-4 flex-wrap justify-center",
+                                for seat in seats.iter() {
+                                    SeatCard { seat: seat.clone() }
+                                }
+                            }
+                        }
+                    },
                 },
             }
         }
