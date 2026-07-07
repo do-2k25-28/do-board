@@ -26,7 +26,7 @@ const FREE_STAKE_CAP: u32 = 10;
 /// The most a participant may stake given their current net balance (payouts
 /// won minus stakes spent, across every resolved bet they've taken on this
 /// screen).
-fn stake_cap(balance: i64) -> u32 {
+pub(crate) fn stake_cap(balance: i64) -> u32 {
     if balance > 0 {
         u32::try_from(balance).unwrap_or(MAX_STAKE).min(MAX_STAKE)
     } else {
@@ -376,14 +376,10 @@ pub async fn compute_screen_leaderboard(
         .map(|(id, _)| *id)
         .collect();
 
-    if resolved_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
     #[derive(Default)]
     struct Entry {
         participant_name: String,
-        total_payout: u32,
+        net_score: i64,
         bets_played: u32,
         bets_won: u32,
     }
@@ -414,11 +410,51 @@ pub async fn compute_screen_leaderboard(
             continue;
         };
         let tally = tally_bet(db, *session_id, market, result).await?;
-        for entry in tally.entries.into_iter().filter(|e| e.is_winner) {
+        for entry in tally.entries {
             let leader = by_participant.entry(entry.participant_id).or_default();
             leader.participant_name = entry.participant_name;
-            leader.total_payout += entry.payout;
-            leader.bets_won += 1;
+            leader.net_score += i64::from(entry.payout) - i64::from(entry.stake);
+            if entry.is_winner {
+                leader.bets_won += 1;
+            }
+        }
+    }
+
+    // Fold in resolved gamble rounds (blackjack, etc) the same way - one
+    // "bet_played" per round, one "bet_won" per round that returned more
+    // than the stake (a push doesn't count as a win), and the net
+    // stake/payout difference folded into the same running score as bets.
+    let gamble_played_rows: Vec<(Uuid, String, i64)> = sqlx::query_as(
+        "SELECT gs.participant_id, gs.participant_name, COUNT(*)
+         FROM gamble_seats gs
+         JOIN gamble_tables gt ON gt.id = gs.table_id
+         WHERE gt.screen_id = $1 AND gs.payout IS NOT NULL
+         GROUP BY gs.participant_id, gs.participant_name",
+    )
+    .bind(screen_id)
+    .fetch_all(db)
+    .await?;
+    for (participant_id, participant_name, played) in gamble_played_rows {
+        let entry = by_participant.entry(participant_id).or_default();
+        entry.participant_name = participant_name;
+        entry.bets_played += played as u32;
+    }
+
+    let gamble_payout_rows: Vec<(Uuid, String, i32, i32)> = sqlx::query_as(
+        "SELECT gs.participant_id, gs.participant_name, gs.stake, gs.payout
+         FROM gamble_seats gs
+         JOIN gamble_tables gt ON gt.id = gs.table_id
+         WHERE gt.screen_id = $1 AND gs.payout IS NOT NULL",
+    )
+    .bind(screen_id)
+    .fetch_all(db)
+    .await?;
+    for (participant_id, participant_name, stake, payout) in gamble_payout_rows {
+        let entry = by_participant.entry(participant_id).or_default();
+        entry.participant_name = participant_name;
+        entry.net_score += i64::from(payout) - i64::from(stake);
+        if payout > stake {
+            entry.bets_won += 1;
         }
     }
 
@@ -427,20 +463,21 @@ pub async fn compute_screen_leaderboard(
         .map(|(participant_id, entry)| LeaderboardEntry {
             participant_id: participant_id.to_string(),
             participant_name: entry.participant_name,
-            total_payout: entry.total_payout,
+            net_score: entry.net_score,
             bets_played: entry.bets_played,
             bets_won: entry.bets_won,
         })
         .collect();
-    leaderboard.sort_by_key(|e| std::cmp::Reverse(e.total_payout));
+    leaderboard.sort_by_key(|e| std::cmp::Reverse(e.net_score));
     Ok(leaderboard)
 }
 
 /// A participant's current net balance on a screen: payouts won minus stakes
-/// spent, summed across every resolved bet they've taken part in there. Used
-/// to cap how much they may stake next (see `stake_cap`) - not a real wallet
-/// (never persisted or topped up), just derived on the fly from history.
-async fn compute_participant_balance(
+/// spent, summed across every resolved bet AND resolved gamble round
+/// (blackjack, etc) they've taken part in there. Used to cap how much they
+/// may stake next (see `stake_cap`) - not a real wallet (never persisted or
+/// topped up), just derived on the fly from history.
+pub(crate) async fn compute_participant_balance(
     db: &sqlx::PgPool,
     screen_id: Uuid,
     participant_id: Uuid,
@@ -468,6 +505,20 @@ async fn compute_participant_balance(
                 balance += i64::from(entry.payout) - i64::from(entry.stake);
             }
         }
+    }
+
+    let gamble_rows: Vec<(i32, i32)> = sqlx::query_as(
+        "SELECT gs.stake, gs.payout
+         FROM gamble_seats gs
+         JOIN gamble_tables gt ON gt.id = gs.table_id
+         WHERE gt.screen_id = $1 AND gs.participant_id = $2 AND gs.payout IS NOT NULL",
+    )
+    .bind(screen_id)
+    .bind(participant_id)
+    .fetch_all(db)
+    .await?;
+    for (stake, payout) in gamble_rows {
+        balance += i64::from(payout) - i64::from(stake);
     }
 
     Ok(balance)
@@ -506,13 +557,16 @@ pub async fn get_interaction(
         .participant_id
         .as_deref()
         .and_then(|s| Uuid::parse_str(s).ok());
-    let max_stake = match (&interaction, participant_id) {
-        (InteractionKind::Bet { result: None, .. }, Some(participant_id)) => {
-            let balance = compute_participant_balance(&state.db, row.screen_id, participant_id)
+    let balance = match participant_id {
+        Some(participant_id) => Some(
+            compute_participant_balance(&state.db, row.screen_id, participant_id)
                 .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            Some(stake_cap(balance))
-        }
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        ),
+        None => None,
+    };
+    let max_stake = match (&interaction, balance) {
+        (InteractionKind::Bet { result: None, .. }, Some(balance)) => Some(stake_cap(balance)),
         _ => None,
     };
 
@@ -520,6 +574,7 @@ pub async fn get_interaction(
         interaction,
         results,
         max_stake,
+        balance,
     }))
 }
 

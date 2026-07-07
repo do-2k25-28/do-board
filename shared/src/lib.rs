@@ -148,6 +148,17 @@ pub enum SlideConfig {
     /// Passive display of a screen's cumulative bet leaderboard - no config
     /// of its own, fed by `GET /api/screens/{screen_id}/leaderboard`.
     Leaderboard {},
+    /// A live, multiplayer casino-style game table (e.g. Blackjack) - unlike
+    /// `Interactive`, this isn't an aggregate of independent one-shot
+    /// responses but a shared, continuously evolving game state. See
+    /// `GambleGame`/`GambleTableState`.
+    Gamble {
+        /// Stable uuid, generated once when the slide is created. Embedded in
+        /// the join URL/QR code shown on screen - must never be regenerated
+        /// on save, or existing QR codes/links stop working.
+        session_id: String,
+        game: GambleGame,
+    },
 }
 
 /// Config for an interactive slide, keyed by `kind` in JSON. Each variant is
@@ -244,13 +255,15 @@ pub struct BetPayout {
     pub payout: u32,
 }
 
-/// One row of a screen's cumulative bet leaderboard, summed across every
-/// resolved `Bet` slide that has ever run on that screen.
+/// One row of a screen's cumulative leaderboard, net of stakes and summed
+/// across every resolved `Bet` and `Gamble` round that has ever run on that
+/// screen - the same net balance `stake_cap` is derived from, so it can go
+/// negative for a participant who's lost more than they've won.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LeaderboardEntry {
     pub participant_id: String,
     pub participant_name: String,
-    pub total_payout: u32,
+    pub net_score: i64,
     pub bets_played: u32,
     pub bets_won: u32,
 }
@@ -266,6 +279,12 @@ pub struct InteractionInfo {
     /// an anonymous/screen-side lookup).
     #[serde(default)]
     pub max_stake: Option<u32>,
+    /// The requesting participant's current net balance (payouts won minus
+    /// stakes spent, across every resolved bet and gamble round on this
+    /// screen) - can be negative. Only set when the request identified the
+    /// participant (`?participant_id=`).
+    #[serde(default)]
+    pub balance: Option<i64>,
 }
 
 /// Body of `POST /api/interact/{session_id}/respond`.
@@ -285,6 +304,131 @@ pub enum InteractionResponse {
     Poll { option_index: usize },
     Bet { pick: BetOutcome, stake: u32 },
     Drawing { stroke: DrawingStroke },
+}
+
+// ── Gamble (casino-style games) ──────────────────────────────────────────────
+
+/// Which casino game a `Gamble` slide's table is running - the shared
+/// scaffolding (session_id, join/poll flow, screen push) is the same for
+/// every game; only the game-specific config/rules differ.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GambleGame {
+    Blackjack(BlackjackConfig),
+}
+
+/// No configurable options yet - dealer stands on all 17s, hit/stand only,
+/// infinite shoe. Kept as a struct (not a unit variant) so options can be
+/// added later without a breaking shape change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct BlackjackConfig {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Suit {
+    Hearts,
+    Diamonds,
+    Clubs,
+    Spades,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Card {
+    /// 1-13, ace is 1 (hand-value logic decides whether it counts as 1 or 11).
+    pub rank: u8,
+    pub suit: Suit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeatStatus {
+    Playing,
+    Stood,
+    Busted,
+    Blackjack,
+}
+
+/// One player's hand at the table for the current round.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Seat {
+    pub participant_id: String,
+    pub participant_name: String,
+    pub stake: u32,
+    pub hand: Vec<Card>,
+    pub status: SeatStatus,
+    /// `None` until the round resolves.
+    #[serde(default)]
+    pub payout: Option<u32>,
+}
+
+/// A blackjack table's current state, keyed by phase. Advances automatically
+/// server-side (see `backend::routes::gamble::load_or_advance_table`) - a
+/// continuous table cycles `Betting -> PlayerTurns -> DealerPlay -> Resolved
+/// -> Betting` on its own, no admin action needed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum GambleTableState {
+    /// Open for players to sit down and bet. `betting_ends_at` is an RFC3339
+    /// timestamp so clients can render a countdown.
+    Betting {
+        seats: Vec<Seat>,
+        betting_ends_at: String,
+    },
+    /// Everyone's been dealt two cards; each seated player hits/stands at
+    /// their own pace. Only the dealer's up-card is known.
+    PlayerTurns {
+        dealer_up_card: Card,
+        seats: Vec<Seat>,
+    },
+    /// All players are done; the dealer is drawing per house rules.
+    DealerPlay {
+        dealer_hand: Vec<Card>,
+        seats: Vec<Seat>,
+    },
+    /// Payouts computed - `Seat::payout` is `Some` for everyone.
+    Resolved {
+        dealer_hand: Vec<Card>,
+        seats: Vec<Seat>,
+    },
+}
+
+/// Returned by `GET /api/gamble/{session_id}` for the public join page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GambleInfo {
+    pub game: GambleGame,
+    pub state: GambleTableState,
+    /// The most the requesting participant may currently stake - same
+    /// balance/free-allowance rule as `InteractionInfo::max_stake`, shared
+    /// across bets and gambling on a screen. `None` without `?participant_id=`.
+    #[serde(default)]
+    pub max_stake: Option<u32>,
+    /// The requesting participant's current net balance, same as
+    /// `InteractionInfo::balance` - can be negative. `None` without
+    /// `?participant_id=`.
+    #[serde(default)]
+    pub balance: Option<i64>,
+}
+
+/// Body of `POST /api/gamble/{session_id}/join`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GambleJoinRequest {
+    pub participant_id: String,
+    pub participant_name: String,
+    pub stake: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GambleAction {
+    Hit,
+    Stand,
+}
+
+/// Body of `POST /api/gamble/{session_id}/action`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GambleActionRequest {
+    pub participant_id: String,
+    pub action: GambleAction,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

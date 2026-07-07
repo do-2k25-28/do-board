@@ -1,5 +1,6 @@
 mod birthdays;
 mod devices;
+pub(crate) mod gamble;
 pub(crate) mod interact;
 mod login;
 mod media;
@@ -11,9 +12,16 @@ mod weather;
 
 use crate::state::AppState;
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{any, get, post, put},
     Router,
 };
+
+/// Axum's implicit default body limit is 2MB, well under the 15MB image
+/// cap enforced in `media::upload_image` - without raising it here, an
+/// oversized request (e.g. an animated GIF) is rejected by axum before the
+/// handler's own check ever runs.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024; // 16 MB
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -60,5 +68,9 @@ pub fn router() -> Router<AppState> {
             "/api/interact/{session_id}/respond",
             post(interact::respond),
         )
+        .route("/api/gamble/{session_id}", get(gamble::get_table))
+        .route("/api/gamble/{session_id}/join", post(gamble::join_table))
+        .route("/api/gamble/{session_id}/action", post(gamble::play_action))
         .route("/ws", get(devices::ws_handler))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }

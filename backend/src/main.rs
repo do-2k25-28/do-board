@@ -60,6 +60,7 @@ async fn main() {
 
     pubsub::spawn_device_push_listener(state.clone());
     pubsub::spawn_interaction_update_listener(state.clone());
+    pubsub::spawn_gamble_update_listener(state.clone());
 
     // Credentialed requests (needed so the browser sends the HttpOnly auth
     // cookie) can't use a literal `*` for origin/methods per the Fetch spec -

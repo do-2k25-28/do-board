@@ -11,7 +11,7 @@ mod settings;
 mod users;
 
 pub use home::Home;
-pub use join::Join;
+pub use join::{GambleJoin, Join};
 pub use login::Login;
 pub use not_found::NotFound;
 pub use screen::Screen;
@@ -29,6 +29,8 @@ pub enum Route {
     Screen {},
     #[route("/join/:session_id")]
     Join { session_id: String },
+    #[route("/gamble/:session_id")]
+    GambleJoin { session_id: String },
     #[route("/login")]
     Login {},
     #[layout(AuthGuard)]
