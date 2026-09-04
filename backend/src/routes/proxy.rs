@@ -1,7 +1,7 @@
 use axum::{
     body::{to_bytes, Bytes},
     extract::{Path, Query, Request},
-    http::{header, Method, StatusCode},
+    http::{header, HeaderValue, Method, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -163,6 +163,20 @@ pub async fn proxy_all(
         .unwrap_or("")
         .to_string();
 
+    // Forward Set-Cookie from the upstream response so auth flows started
+    // inside the iframe (e.g. login setting token/refreshToken) actually
+    // reach the browser. The Domain attribute is stripped since the browser
+    // sees this response as coming from our own origin, not the target's —
+    // a mismatched Domain would make the browser reject the cookie outright.
+    let set_cookies: Vec<HeaderValue> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(strip_cookie_domain)
+        .filter_map(|s| HeaderValue::from_str(&s).ok())
+        .collect();
+
     let is_html =
         content_type.contains("html") || content_type.is_empty() && target_url.ends_with('/');
 
@@ -185,7 +199,7 @@ pub async fn proxy_all(
         } else {
             "no-store"
         };
-        return (
+        let mut response = (
             status,
             [
                 (header::CONTENT_TYPE, ct),
@@ -194,6 +208,10 @@ pub async fn proxy_all(
             bytes,
         )
             .into_response();
+        for c in &set_cookies {
+            response.headers_mut().append(header::SET_COOKIE, c.clone());
+        }
+        return response;
     }
 
     let body = match resp.text().await {
@@ -210,7 +228,7 @@ pub async fn proxy_all(
         q.scroll_y,
     );
 
-    (
+    let mut response = (
         status,
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
@@ -218,7 +236,28 @@ pub async fn proxy_all(
         ],
         modified,
     )
-        .into_response()
+        .into_response();
+    for c in &set_cookies {
+        response.headers_mut().append(header::SET_COOKIE, c.clone());
+    }
+    response
+}
+
+/// Remove the `Domain=...` attribute from a `Set-Cookie` value. The browser
+/// sees this response as coming from our proxy's own origin, so a `Domain`
+/// naming the upstream host would fail the same-domain check and be dropped
+/// entirely — stripping it makes the cookie host-only for our origin instead.
+fn strip_cookie_domain(value: &str) -> String {
+    value
+        .split(';')
+        .filter(|part| {
+            !part
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("domain=")
+        })
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 // ── HTML rewriting ────────────────────────────────────────────────────────────

@@ -5,8 +5,9 @@ use gloo_timers::future::TimeoutFuture;
 use serde::Deserialize;
 use shared::{
     BetMarket, BetOutcome, Card, ClockConfig, ClockStyle, DrawingStroke, GambleGame, GambleInfo,
-    GambleTableState, InteractionInfo, InteractionKind, InteractionResults, LeaderboardEntry,
-    Screen as SharedScreen, ScreenFont, Seat, SeatStatus, SlideConfig, SlideTransition, Suit,
+    GambleTableState, InteractionInfo, InteractionKind, InteractionResults, KvEntry,
+    LeaderboardEntry, Screen as SharedScreen, ScreenFont, Seat, SeatStatus, SlideConfig,
+    SlideTransition, Suit,
 };
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -152,6 +153,37 @@ fn url_to_proxy_path(url: &str) -> String {
     } else {
         format!("{scheme}/{rest}/")
     }
+}
+
+/// Builds the `src` for an iframe slide: the bare URL when there's nothing to
+/// inject, or a same-origin proxy URL (carrying localStorage/cookies/scroll)
+/// otherwise - injection only works from our own origin.
+fn iframe_src(
+    url: &str,
+    cookies: &[KvEntry],
+    local_storage: &[KvEntry],
+    scroll_y_percent: u8,
+) -> String {
+    if local_storage.is_empty() && cookies.is_empty() && scroll_y_percent == 0 {
+        return url.to_string();
+    }
+    let ls_map: HashMap<&str, &str> = local_storage
+        .iter()
+        .map(|e| (e.key.as_str(), e.value.as_str()))
+        .collect();
+    let cookies_map: HashMap<&str, &str> = cookies
+        .iter()
+        .map(|e| (e.key.as_str(), e.value.as_str()))
+        .collect();
+    let ls_json = serde_json::to_string(&ls_map).unwrap_or_default();
+    let cookies_json = serde_json::to_string(&cookies_map).unwrap_or_default();
+    let proxy_path = url_to_proxy_path(url);
+    format!(
+        "{API_BASE}/api/iframe-proxy/{proxy_path}?ls={}&cookies={}&scroll_y={}",
+        percent_encode(&ls_json),
+        percent_encode(&cookies_json),
+        scroll_y_percent,
+    )
 }
 
 const API_BASE: &str = match option_env!("API_BASE") {
@@ -653,6 +685,33 @@ pub fn Screen() -> Element {
         format!("{bg}--do-fg:{fg};font-family:{font};")
     };
 
+    // Iframe slides configured to stay loaded: kept mounted across the whole
+    // rotation (each in its own hidden/visible layer below) instead of being
+    // torn down and recreated every time the rotation reaches them.
+    let keep_loaded_iframes: Vec<(usize, String)> = current_screen
+        .read()
+        .as_ref()
+        .map(|s| {
+            s.slides
+                .iter()
+                .enumerate()
+                .filter_map(|(i, sl)| match &sl.config {
+                    SlideConfig::Iframe {
+                        url,
+                        cookies,
+                        local_storage,
+                        scroll_y_percent,
+                        keep_loaded: true,
+                    } => Some((
+                        i,
+                        iframe_src(url, cookies, local_storage, *scroll_y_percent),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let slide_content: Element = {
         let screen = current_screen.read();
         let screen_id = screen.as_ref().map(|s| s.id.clone()).unwrap_or_default();
@@ -673,41 +732,22 @@ pub fn Screen() -> Element {
                 }
             },
             Some(slide) => match &slide.config {
+                // `keep_loaded` slides are rendered by the persistent iframe
+                // layer below instead (kept mounted and shown/hidden with
+                // CSS across rotations, so they never reload); only a slide
+                // with `keep_loaded: false` gets its iframe mounted here,
+                // fresh on every time it becomes the active slide.
+                SlideConfig::Iframe {
+                    keep_loaded: true, ..
+                } => rsx! {},
                 SlideConfig::Iframe {
                     url,
                     cookies,
                     local_storage,
                     scroll_y_percent,
+                    keep_loaded: false,
                 } => {
-                    // Scrolling requires injecting a script into the document, which
-                    // only works when the page is served from our own origin — so a
-                    // non-zero scroll forces the proxy path even with no cookies/LS.
-                    let src = if local_storage.is_empty()
-                        && cookies.is_empty()
-                        && *scroll_y_percent == 0
-                    {
-                        url.clone()
-                    } else {
-                        let ls_map: HashMap<&str, &str> = local_storage
-                            .iter()
-                            .map(|e| (e.key.as_str(), e.value.as_str()))
-                            .collect();
-                        let cookies_map: HashMap<&str, &str> = cookies
-                            .iter()
-                            .map(|e| (e.key.as_str(), e.value.as_str()))
-                            .collect();
-                        let ls_json = serde_json::to_string(&ls_map).unwrap_or_default();
-                        let cookies_json = serde_json::to_string(&cookies_map).unwrap_or_default();
-                        // Path-based proxy: /api/iframe-proxy/{scheme}/{host}/{path}
-                        // Assets load from the same proxy path → same origin → no CORS/module issues
-                        let proxy_path = url_to_proxy_path(url);
-                        format!(
-                            "{API_BASE}/api/iframe-proxy/{proxy_path}?ls={}&cookies={}&scroll_y={}",
-                            percent_encode(&ls_json),
-                            percent_encode(&cookies_json),
-                            scroll_y_percent,
-                        )
-                    };
+                    let src = iframe_src(url, cookies, local_storage, *scroll_y_percent);
                     rsx! {
                         iframe { src: "{src}", class: "w-full h-full border-0" }
                     }
@@ -853,6 +893,14 @@ pub fn Screen() -> Element {
                 class: "absolute inset-0 w-full h-full {anim_class}",
                 style: "--tr-dur:{anim_dur_ms}ms",
                 {slide_content}
+                for (i, src) in keep_loaded_iframes.iter() {
+                    div {
+                        key: "{i}",
+                        class: "absolute inset-0 w-full h-full",
+                        style: if *i == idx { "" } else { "display:none" },
+                        iframe { src: "{src}", class: "w-full h-full border-0" }
+                    }
+                }
             }
 
             if total_slides > 1 {

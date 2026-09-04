@@ -83,6 +83,10 @@ fn default_weather_days() -> u8 {
     1
 }
 
+fn default_keep_loaded() -> bool {
+    true
+}
+
 fn default_transition_duration_ms() -> u32 {
     500
 }
@@ -126,6 +130,14 @@ pub enum SlideConfig {
         /// scrollable height. 0 = top, 50 = middle, 100 = bottom.
         #[serde(default)]
         scroll_y_percent: u8,
+        /// When true (default), the iframe is preloaded alongside the other
+        /// slides and only shown/hidden with CSS when the rotation reaches
+        /// it, so it never reloads on every pass. Set to false to instead
+        /// load it fresh (and drop it) each time it becomes the active
+        /// slide - useful when the page's content must be re-fetched on
+        /// every display rather than staying alive in the background.
+        #[serde(default = "default_keep_loaded")]
+        keep_loaded: bool,
     },
     Clock {
         clocks: Vec<ClockConfig>,

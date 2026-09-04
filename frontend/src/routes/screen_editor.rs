@@ -81,6 +81,7 @@ fn new_slide(slide_type: &str) -> Slide {
             cookies: vec![],
             local_storage: vec![],
             scroll_y_percent: 0,
+            keep_loaded: true,
         },
         "image" => SlideConfig::Image { url: String::new() },
         "video" => SlideConfig::Video { url: String::new() },
@@ -846,26 +847,30 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
     let mut bday_import_status = use_signal(|| Option::<String>::None);
 
     // iFrame
-    let (i_url, i_cookies, i_local_storage, i_scroll_y) = if let SlideConfig::Iframe {
-        url,
-        cookies,
-        local_storage,
-        scroll_y_percent,
-    } = &slide.config
-    {
-        (
-            url.clone(),
-            cookies.clone(),
-            local_storage.clone(),
-            *scroll_y_percent,
-        )
-    } else {
-        (String::new(), vec![], vec![], 0)
-    };
+    let (i_url, i_cookies, i_local_storage, i_scroll_y, i_keep_loaded) =
+        if let SlideConfig::Iframe {
+            url,
+            cookies,
+            local_storage,
+            scroll_y_percent,
+            keep_loaded,
+        } = &slide.config
+        {
+            (
+                url.clone(),
+                cookies.clone(),
+                local_storage.clone(),
+                *scroll_y_percent,
+                *keep_loaded,
+            )
+        } else {
+            (String::new(), vec![], vec![], 0, true)
+        };
     let mut iframe_url = use_signal(move || i_url);
     let mut iframe_cookies: Signal<Vec<KvEntry>> = use_signal(move || i_cookies);
     let mut iframe_local_storage: Signal<Vec<KvEntry>> = use_signal(move || i_local_storage);
     let mut iframe_scroll_y: Signal<u8> = use_signal(move || i_scroll_y);
+    let mut iframe_keep_loaded: Signal<bool> = use_signal(move || i_keep_loaded);
     let mut iframe_new_cookie_key = use_signal(String::new);
     let mut iframe_new_cookie_val = use_signal(String::new);
     let mut iframe_new_ls_key = use_signal(String::new);
@@ -1044,6 +1049,7 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                 cookies: iframe_cookies(),
                 local_storage: iframe_local_storage(),
                 scroll_y_percent: iframe_scroll_y(),
+                keep_loaded: iframe_keep_loaded(),
             },
             "image" => SlideConfig::Image { url: image_url() },
             "video" => SlideConfig::Video { url: video_url() },
@@ -1601,6 +1607,23 @@ fn SlideForm(slide: Slide, on_save: EventHandler<Slide>, on_cancel: EventHandler
                             placeholder: "https://example.com",
                             value: iframe_url(),
                             oninput: move |v| iframe_url.set(v),
+                        }
+                    }
+
+                    // Keep loaded across rotations
+                    div { class: "flex items-start gap-2",
+                        input {
+                            r#type: "checkbox",
+                            id: "ikeeploaded",
+                            class: "mt-1",
+                            checked: iframe_keep_loaded(),
+                            onchange: move |e| iframe_keep_loaded.set(e.checked()),
+                        }
+                        div { class: "flex flex-col gap-0.5",
+                            Label { html_for: "ikeeploaded", "Keep loaded in the background" }
+                            p { class: "text-xs text-muted-foreground",
+                                "Preloads this page once and just shows/hides it on rotation, so it never reloads. Turn off to instead reload it fresh (and drop it) every time it becomes the active slide."
+                            }
                         }
                     }
 
